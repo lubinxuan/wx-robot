@@ -13,7 +13,7 @@ public class Robot {
     }
 
     public static void main(String[] args) throws InterruptedException {
-        new Server("wx782c26e4c19acffb").start();
+        new Server("wx782c26e4c19acffb").run();
         TimeUnit.HOURS.sleep(1);
     }
 }

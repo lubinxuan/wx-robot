@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Created by xuanlubin on 2017/4/18.
  */
-public class Server {
+public class Server implements Runnable {
 
     private static final Logger logger = LoggerFactory.getLogger(Server.class);
 
@@ -35,10 +35,10 @@ public class Server {
                 .build();
     }
 
-    public void start() {
+    @Override
+    public void run() {
         this.queryNewUUID();
     }
-
 
     /**
      * 初始化
