@@ -259,7 +259,7 @@ public class BaseServer implements Runnable {
                     idx = content.indexOf("\"", idx);
                     int e_idx = content.indexOf("\"", idx + 1);
                     BaseServer.this.user.setUuid(content.substring(idx + 1, e_idx));
-                    statusListener.onUUIDSuccess("UUID获取成功 https://login.weixin.qq.com/qrcode/"+BaseServer.this.user.getUuid());
+                    statusListener.onUUIDSuccess("https://login.weixin.qq.com/qrcode/"+BaseServer.this.user.getUuid());
                     BaseServer.this.waitForLogin();
                 } else {
                     logger.warn("没有正常获取到UUID");
