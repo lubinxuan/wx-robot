@@ -22,6 +22,8 @@ public class LoginUser {
 
     private String sid;
 
+    private String loginHost = "wx.qq.com";
+
     private JSONObject syncKey;
 
     public String getUuid() {
@@ -86,6 +88,14 @@ public class LoginUser {
 
     public void setUserName(String userName) {
         this.userName = userName;
+    }
+
+    public String getLoginHost() {
+        return loginHost;
+    }
+
+    public void setLoginHost(String loginHost) {
+        this.loginHost = loginHost;
     }
 
     public JSONObject getSyncKey() {

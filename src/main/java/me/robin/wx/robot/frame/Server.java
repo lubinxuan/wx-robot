@@ -6,8 +6,13 @@ import com.alibaba.fastjson.JSONObject;
 import com.alibaba.fastjson.JSONPath;
 import com.alibaba.fastjson.util.TypeUtils;
 import me.robin.wx.robot.frame.cookie.CookieInterceptor;
+import me.robin.wx.robot.frame.cookie.MemoryCookieStore;
+import me.robin.wx.robot.frame.listener.MessageSendListener;
 import me.robin.wx.robot.frame.listener.SyncListener;
 import me.robin.wx.robot.frame.model.LoginUser;
+import me.robin.wx.robot.frame.model.WxUser;
+import me.robin.wx.robot.frame.service.ContactService;
+import me.robin.wx.robot.frame.service.impl.ContactServiceImpl;
 import me.robin.wx.robot.frame.util.ResponseReadUtils;
 import me.robin.wx.robot.frame.util.WxUtil;
 import okhttp3.*;
@@ -17,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.CookieStore;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,24 +40,25 @@ public class Server implements Runnable {
 
     private LoginUser user = new LoginUser();
 
-    private String host = "wx.qq.com";
-
     private OkHttpClient client;
 
     private SyncListener syncListener;
 
-    public Server(String appId) {
+    private ContactService contactService;
+
+    private CookieStore cookieStore;
+
+    private volatile boolean login = false;
+
+    public Server(String appId,ContactService contactService) {
         this.appId = appId;
+        this.cookieStore = new MemoryCookieStore();
+        this.contactService = contactService;
         this.client = new OkHttpClient.Builder()
                 .readTimeout(60, TimeUnit.SECONDS)
                 .connectTimeout(60, TimeUnit.SECONDS)
-                //.cookieJar(new PersistCookieJar())
-                .addInterceptor(new CookieInterceptor())
+                .addInterceptor(new CookieInterceptor(this.cookieStore))
                 .build();
-    }
-
-    public void setSyncListener(SyncListener syncListener) {
-        this.syncListener = syncListener;
     }
 
     @Override
@@ -76,7 +83,9 @@ public class Server implements Runnable {
                     Server.this.user.setNickName(user.getString("NickName"));
                     Server.this.user.setSyncKey(responseJson.getJSONObject("SyncKey"));
                     statusNotify();
+                    contactService.updateContact(responseJson.getJSONArray("ContactList"));
                     getContact();
+                    login = true;
                 } else {
                     String message = TypeUtils.castToString(JSONPath.eval(responseJson, "BaseResponse.ErrMsg"));
                     logger.warn("web微信初始化失败 ret:{} errMsg:{}", ret, message);
@@ -85,6 +94,59 @@ public class Server implements Runnable {
         });
     }
 
+    public void sendTextMessage(String user, String message, MessageSendListener messageSendListener) {
+
+        if (!login) {
+            logger.info("还未完成登录,不能发送消息");
+            messageSendListener.serverNotReady(user, message);
+            return;
+        }
+
+        WxUser wxUser = contactService.queryUser(user);
+        if (null == wxUser) {
+            logger.info("找不到目标用户,不能发送消息");
+            messageSendListener.userNotFound(user, message);
+            return;
+        }
+
+        Request.Builder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxsendmsg");
+        Map<String, Object> requestBody = baseRequest();
+        String localId = System.currentTimeMillis() + WxUtil.random(4);
+        requestBody.put("Scene", 0);
+        JSONObject msg = new JSONObject();
+        msg.put("Type", 1);
+        msg.put("Content", message);
+        msg.put("FromUserName", this.user.getUserName());
+        msg.put("ToUserName", wxUser.getUserName());
+        msg.put("LocalID", localId);
+        msg.put("ClientMsgId", localId);
+
+        requestBody.put("Msg", msg);
+
+        WxUtil.jsonRequest(requestBody, builder::post);
+
+        client.newCall(builder.build()).enqueue(new BaseCallback() {
+            @Override
+            void process(Call call, Response response, String content) {
+                JSONObject syncRsp = JSON.parseObject(content);
+                Integer ret = TypeUtils.castToInt(JSONPath.eval(syncRsp, "BaseResponse.Ret"));
+                if (null != ret && 0 == ret) {
+                    logger.info("消息发送成功");
+                    String msgId = syncRsp.getString("MsgID");
+                    msg.put("MsgId", msgId);
+                    messageSendListener.success(user, message, msgId, localId);
+                } else {
+                    logger.info("消息发送失败:{}", content);
+                    messageSendListener.failure(user, message);
+                }
+            }
+        });
+    }
+
+
+    /**
+     * 获取通讯录
+     */
     private void getContact() {
         Request request = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxgetcontact", "lang", "zh_CN", "r", System.currentTimeMillis(), "seq", "0", "skey", user.getSkey()).build();
         client.newCall(request).enqueue(new BaseCallback() {
@@ -93,14 +155,22 @@ public class Server implements Runnable {
                 logger.info("获取到联系人列表");
                 syncCheck();
                 batchGetContact();
+                contactService.updateContact(JSON.parseObject(content).getJSONArray("MemberList"));
             }
         });
     }
 
+    /**
+     * 获取通讯录
+     */
     private void batchGetContact() {
 
     }
 
+
+    /**
+     * long poll sync
+     */
     private void syncCheck() {
         //https://webpush.wx2.qq.com/cgi-bin/mmwebwx-bin/synccheck?r=1492576604964&skey=%40crypt_cfbf95a5_ddaa708f9a9ac2e2d7a95a0a433b3c67&sid=GQ7GDgvoL6Y8FrQY&uin=1376796829&deviceid=e644133084693151&synckey=1_657703788%7C2_657703818%7C3_657703594%7C1000_1492563241&_=1492576604148
         String url = "https://webpush.{host}/cgi-bin/mmwebwx-bin/synccheck";
@@ -135,6 +205,9 @@ public class Server implements Runnable {
         });
     }
 
+    /**
+     * sync messages
+     */
     private void sync() {
         //https://wx2.qq.com/cgi-bin/mmwebwx-bin/webwxsync?sid=GQ7GDgvoL6Y8FrQY&skey=@crypt_cfbf95a5_ddaa708f9a9ac2e2d7a95a0a433b3c67
         Request.Builder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxsync", "sid", user.getSid(), "skey", user.getSkey());
@@ -261,7 +334,7 @@ public class Server implements Runnable {
                     case "200":
                         String url = StringUtils.substringBetween(content, "window.redirect_uri=\"", "\"");
                         HttpUrl httpUrl = HttpUrl.parse(url);
-                        Server.this.host = httpUrl.host();
+                        user.setLoginHost(httpUrl.host());
                         Server.this.login(url);
                         break;
                     case "201":
@@ -306,10 +379,10 @@ public class Server implements Runnable {
     private Request.Builder initRequestBuilder(String path, Object... params) {
         HttpUrl.Builder urlBuilder = new HttpUrl.Builder();
         if (path.startsWith("https://")) {
-            urlBuilder = HttpUrl.parse(path.replace("{host}", this.host)).newBuilder();
+            urlBuilder = HttpUrl.parse(path.replace("{host}", user.getLoginHost())).newBuilder();
         } else {
             urlBuilder.scheme("https");
-            urlBuilder.host(this.host);
+            urlBuilder.host(user.getLoginHost());
             urlBuilder.encodedPath(path);
         }
         if (null != params) {
@@ -324,7 +397,7 @@ public class Server implements Runnable {
 
         Request.Builder builder = new Request.Builder().url(urlBuilder.build());
         builder.header("User-Agent", "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2987.98 Safari/537.36");
-        builder.header("Referer", "https://" + this.host + "/");
+        builder.header("Referer", "https://" + user.getLoginHost() + "/");
         builder.header("Accept-Encoding", "gzip, deflate, br");
         builder.header("Connection", "keep-alive");
         builder.header("Accept-Language", "zh-CN,zh;q=0.8,en;q=0.6,en-US;q=0.4,zh-TW;q=0.2,ja;q=0.2");
@@ -347,6 +420,11 @@ public class Server implements Runnable {
         return wrap;
     }
 
+    /**
+     * 组装SyncKey参数
+     *
+     * @return
+     */
     private String syncKey() {
         JSONArray array = user.getSyncKey().getJSONArray("List");
         StringBuilder sb = new StringBuilder();
@@ -358,6 +436,10 @@ public class Server implements Runnable {
             sb.append(key.getString("Key")).append("_").append(key.getString("Val"));
         }
         return sb.toString();
+    }
+
+    public void setSyncListener(SyncListener syncListener) {
+        this.syncListener = syncListener;
     }
 
     public abstract class BaseCallback implements Callback {

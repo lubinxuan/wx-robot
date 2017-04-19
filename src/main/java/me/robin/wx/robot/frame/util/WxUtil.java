@@ -60,4 +60,9 @@ public class WxUtil {
         RequestBody requestBody = RequestBody.create(MediaType.parse("application/json;charset=utf-8"), JSON.toJSONString(data));
         consumer.accept(requestBody);
     }
+
+    public static String revertXml(String content){
+        content = StringUtils.replace(content,"&lt;","<");
+        return StringUtils.replace(content,"&gt;",">");
+    }
 }

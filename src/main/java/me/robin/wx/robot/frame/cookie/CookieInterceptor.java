@@ -4,10 +4,7 @@ import okhttp3.*;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.IOException;
-import java.net.CookieHandler;
-import java.net.CookieManager;
-import java.net.CookiePolicy;
-import java.net.URI;
+import java.net.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +16,10 @@ public class CookieInterceptor implements Interceptor {
 
     private CookieHandler cookieHandler = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
 
+    public CookieInterceptor(CookieStore cookieStore) {
+        this.cookieHandler = new CookieManager(cookieStore, CookiePolicy.ACCEPT_ALL);
+    }
+
     @Override
     public Response intercept(Chain chain) throws IOException {
         Request request = chain.request();
@@ -28,7 +29,7 @@ public class CookieInterceptor implements Interceptor {
         Response networkResponse;
         if (null != cookies && !cookies.isEmpty()) {
             Request.Builder requestBuilder = request.newBuilder();
-            requestBuilder.header("Cookie", StringUtils.join(cookies,"; "));
+            requestBuilder.header("Cookie", StringUtils.join(cookies, "; "));
             networkResponse = chain.proceed(requestBuilder.build());
             networkResponse = networkResponse.newBuilder().request(request).build();
         } else {
