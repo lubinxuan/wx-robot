@@ -4,7 +4,7 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import me.robin.wx.robot.frame.Server;
 import me.robin.wx.robot.frame.listener.MessageSendListener;
-import me.robin.wx.robot.frame.listener.SyncListener;
+import me.robin.wx.robot.frame.listener.ServerStatusListener;
 import me.robin.wx.robot.frame.service.ContactService;
 import me.robin.wx.robot.frame.service.impl.ContactServiceImpl;
 import me.robin.wx.robot.frame.util.WxUtil;
@@ -49,7 +49,13 @@ public class Robot {
             }
         };
 
-        server.setSyncListener(new SyncListener() {
+        server.setStatusListener(new ServerStatusListener() {
+
+            @Override
+            public void onUUIDSuccess(String url) {
+                logger.debug("登录二维码:{}", url);
+            }
+
             @Override
             public void onAddMsgList(JSONArray addMsgList, Server server) {
                 for (int i = 0; i < addMsgList.size(); i++) {

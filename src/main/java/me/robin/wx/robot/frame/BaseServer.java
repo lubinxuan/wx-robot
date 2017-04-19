@@ -7,10 +7,8 @@ import com.alibaba.fastjson.JSONPath;
 import com.alibaba.fastjson.util.TypeUtils;
 import me.robin.wx.robot.frame.cookie.CookieInterceptor;
 import me.robin.wx.robot.frame.cookie.MemoryCookieStore;
-import me.robin.wx.robot.frame.listener.MessageSendListener;
-import me.robin.wx.robot.frame.listener.SyncListener;
+import me.robin.wx.robot.frame.listener.ServerStatusListener;
 import me.robin.wx.robot.frame.model.LoginUser;
-import me.robin.wx.robot.frame.model.WxUser;
 import me.robin.wx.robot.frame.service.ContactService;
 import me.robin.wx.robot.frame.util.ResponseReadUtils;
 import me.robin.wx.robot.frame.util.WxUtil;
@@ -41,7 +39,7 @@ public class BaseServer implements Runnable {
 
     OkHttpClient client;
 
-    SyncListener syncListener;
+    ServerStatusListener statusListener;
 
     ContactService contactService;
 
@@ -182,11 +180,11 @@ public class BaseServer implements Runnable {
                         logger.info("更新用户SKey");
                         user.setSkey(skey);
                     }
-                    if (null != syncListener) {
-                        syncListener.onAddMsgList(syncRsp.getJSONArray("AddMsgList"), (Server) BaseServer.this);
-                        syncListener.onDelContactList(syncRsp.getJSONArray("ModContactList"), (Server) BaseServer.this);
-                        syncListener.onModChatRoomMemberList(syncRsp.getJSONArray("DelContactList"), (Server) BaseServer.this);
-                        syncListener.onModContactList(syncRsp.getJSONArray("ModChatRoomMemberList"), (Server) BaseServer.this);
+                    if (null != statusListener) {
+                        statusListener.onAddMsgList(syncRsp.getJSONArray("AddMsgList"), (Server) BaseServer.this);
+                        statusListener.onDelContactList(syncRsp.getJSONArray("ModContactList"), (Server) BaseServer.this);
+                        statusListener.onModChatRoomMemberList(syncRsp.getJSONArray("DelContactList"), (Server) BaseServer.this);
+                        statusListener.onModContactList(syncRsp.getJSONArray("ModChatRoomMemberList"), (Server) BaseServer.this);
                     }
                 } else {
                     logger.warn("同步异常:{}", syncRsp.toJSONString());
@@ -261,7 +259,7 @@ public class BaseServer implements Runnable {
                     idx = content.indexOf("\"", idx);
                     int e_idx = content.indexOf("\"", idx + 1);
                     BaseServer.this.user.setUuid(content.substring(idx + 1, e_idx));
-                    logger.warn("UUID获取成功 https://login.weixin.qq.com/qrcode/{}", BaseServer.this.user.getUuid());
+                    statusListener.onUUIDSuccess("UUID获取成功 https://login.weixin.qq.com/qrcode/"+BaseServer.this.user.getUuid());
                     BaseServer.this.waitForLogin();
                 } else {
                     logger.warn("没有正常获取到UUID");
@@ -392,8 +390,8 @@ public class BaseServer implements Runnable {
         return sb.toString();
     }
 
-    public void setSyncListener(SyncListener syncListener) {
-        this.syncListener = syncListener;
+    public void setStatusListener(ServerStatusListener statusListener) {
+        this.statusListener = statusListener;
     }
 
     public abstract class BaseCallback implements Callback {

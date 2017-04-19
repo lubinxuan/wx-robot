@@ -6,7 +6,10 @@ import me.robin.wx.robot.frame.Server;
 /**
  * Created by xuanlubin on 2017/4/19.
  */
-public interface SyncListener {
+public interface ServerStatusListener {
+
+    void onUUIDSuccess(String url);
+
     void onAddMsgList(JSONArray addMsgList,Server server);
 
     void onModContactList(JSONArray modContactList,Server server);
