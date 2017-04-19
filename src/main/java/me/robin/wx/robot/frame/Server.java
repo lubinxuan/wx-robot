@@ -1,14 +1,26 @@
 package me.robin.wx.robot.frame;
 
-import me.robin.wx.robot.frame.cookie.PersistCookieJar;
-import me.robin.wx.robot.frame.util.ResposeReadUtils;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson.JSONPath;
+import com.alibaba.fastjson.util.TypeUtils;
+import me.robin.wx.robot.frame.cookie.CookieInterceptor;
+import me.robin.wx.robot.frame.listener.SyncListener;
+import me.robin.wx.robot.frame.model.LoginUser;
+import me.robin.wx.robot.frame.util.ResponseReadUtils;
 import me.robin.wx.robot.frame.util.WxUtil;
 import okhttp3.*;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -20,19 +32,26 @@ public class Server implements Runnable {
 
     private String appId;
 
-    private String uuid;
+    private LoginUser user = new LoginUser();
 
     private String host = "wx.qq.com";
 
     private OkHttpClient client;
+
+    private SyncListener syncListener;
 
     public Server(String appId) {
         this.appId = appId;
         this.client = new OkHttpClient.Builder()
                 .readTimeout(60, TimeUnit.SECONDS)
                 .connectTimeout(60, TimeUnit.SECONDS)
-                .cookieJar(new PersistCookieJar())
+                //.cookieJar(new PersistCookieJar())
+                .addInterceptor(new CookieInterceptor())
                 .build();
+    }
+
+    public void setSyncListener(SyncListener syncListener) {
+        this.syncListener = syncListener;
     }
 
     @Override
@@ -44,7 +63,110 @@ public class Server implements Runnable {
      * 初始化
      */
     private void init() {
+        Request.Builder builder = initRequestBuilder(WxConst.INIT_URL, "r", WxUtil.random(10), "lang", "zh_CN", "pass_ticket", user.getPassTicket());
+        WxUtil.jsonRequest(baseRequest(), builder::post);
+        client.newCall(builder.build()).enqueue(new BaseCallback() {
+            @Override
+            public void process(Call call, Response response, String content) {
+                JSONObject responseJson = JSON.parseObject(content);
+                Integer ret = TypeUtils.castToInt(JSONPath.eval(responseJson, "BaseResponse.Ret"));
+                if (null != ret && 0 == ret) {
+                    JSONObject user = responseJson.getJSONObject("User");
+                    Server.this.user.setUserName(user.getString("UserName"));
+                    Server.this.user.setNickName(user.getString("NickName"));
+                    Server.this.user.setSyncKey(responseJson.getJSONObject("SyncKey"));
+                    statusNotify();
+                    getContact();
+                } else {
+                    String message = TypeUtils.castToString(JSONPath.eval(responseJson, "BaseResponse.ErrMsg"));
+                    logger.warn("web微信初始化失败 ret:{} errMsg:{}", ret, message);
+                }
+            }
+        });
+    }
 
+    private void getContact() {
+        Request request = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxgetcontact", "lang", "zh_CN", "r", System.currentTimeMillis(), "seq", "0", "skey", user.getSkey()).build();
+        client.newCall(request).enqueue(new BaseCallback() {
+            @Override
+            void process(Call call, Response response, String content) {
+                logger.info("获取到联系人列表");
+                syncCheck();
+                batchGetContact();
+            }
+        });
+    }
+
+    private void batchGetContact() {
+
+    }
+
+    private void syncCheck() {
+        //https://webpush.wx2.qq.com/cgi-bin/mmwebwx-bin/synccheck?r=1492576604964&skey=%40crypt_cfbf95a5_ddaa708f9a9ac2e2d7a95a0a433b3c67&sid=GQ7GDgvoL6Y8FrQY&uin=1376796829&deviceid=e644133084693151&synckey=1_657703788%7C2_657703818%7C3_657703594%7C1000_1492563241&_=1492576604148
+        String url = "https://webpush.{host}/cgi-bin/mmwebwx-bin/synccheck";
+        Request request = initRequestBuilder(url, "r", System.currentTimeMillis(), "skey", user.getSkey(), "sid", user.getSid(), "uin", user.getUin(), "deviceid", WxUtil.randomDeviceId(), "synckey", syncKey(), "_", System.currentTimeMillis()).build();
+        client.newCall(request).enqueue(new BaseCallback() {
+            @Override
+            void process(Call call, Response response, String content) {
+                String rsp = StringUtils.substringAfter(content, "window.synccheck=");
+                JSONObject syncStatus = JSON.parseObject(rsp);
+                int selector = syncStatus.getIntValue("selector");
+                int retcode = syncStatus.getIntValue("retcode");
+                switch (retcode) {
+                    case 0:
+                        switch (selector) {
+                            case 0:
+                                logger.info("没有信息需要同步");
+                                break;
+                            default:
+                                logger.info("有信息需要同步 selector:{}", selector);
+                                sync();
+                                return;
+                        }
+                        break;
+                    case 1101:
+                        logger.info("客户端退出了");
+                        return;
+                    default:
+                        logger.warn("没有正常获取到同步信息 : {}", content);
+                }
+                syncCheck();
+            }
+        });
+    }
+
+    private void sync() {
+        //https://wx2.qq.com/cgi-bin/mmwebwx-bin/webwxsync?sid=GQ7GDgvoL6Y8FrQY&skey=@crypt_cfbf95a5_ddaa708f9a9ac2e2d7a95a0a433b3c67
+        Request.Builder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxsync", "sid", user.getSid(), "skey", user.getSkey());
+        Map<String, Object> requestBody = baseRequest();
+        requestBody.put("SyncKey", user.getSyncKey());
+        requestBody.put("rr", WxUtil.random(10));
+        WxUtil.jsonRequest(requestBody, builder::post);
+        client.newCall(builder.build()).enqueue(new BaseCallback() {
+            @Override
+            void process(Call call, Response response, String content) {
+                JSONObject syncRsp = JSON.parseObject(content);
+                Integer ret = TypeUtils.castToInt(JSONPath.eval(syncRsp, "BaseResponse.Ret"));
+                if (null != ret && 0 == ret) {
+                    logger.debug("同步成功");
+                    user.setSyncKey(syncRsp.getJSONObject("SyncKey"));
+                    String skey = syncRsp.getString("SKey");
+                    if (StringUtils.isNotBlank(skey)) {
+                        logger.info("更新用户SKey");
+                        user.setSkey(skey);
+                    }
+                    if (null != syncListener) {
+                        syncListener.onAddMsgList(syncRsp.getJSONArray("AddMsgList"), Server.this);
+                        syncListener.onDelContactList(syncRsp.getJSONArray("ModContactList"), Server.this);
+                        syncListener.onModChatRoomMemberList(syncRsp.getJSONArray("DelContactList"), Server.this);
+                        syncListener.onModContactList(syncRsp.getJSONArray("ModChatRoomMemberList"), Server.this);
+                    }
+                } else {
+                    logger.warn("同步异常:{}", content);
+                }
+                syncCheck();
+            }
+        });
     }
 
     /**
@@ -54,20 +176,28 @@ public class Server implements Runnable {
         if (!loginPageUrl.contains("&fun=new&version=v2")) {
             loginPageUrl = loginPageUrl + "&fun=new&version=v2";
         }
-        Request request = initRequest(loginPageUrl);
-        client.newCall(request).enqueue(new Callback() {
+        Request request = initRequestBuilder(loginPageUrl).build();
+        client.newCall(request).enqueue(new BaseCallback() {
             @Override
-            public void onFailure(Call call, IOException e) {
-                logger.error("{}", call.request().url().toString(), e);
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                String content = ResposeReadUtils.read(response);
-                String skey = StringUtils.substringBetween(content, "<skey>", "</skey>");
-                String passTicket = StringUtils.substringBetween(content, "<pass_ticket>", "</pass_ticket>");
-                logger.info("登录成功:  skey:{} passTicket:{}", skey, passTicket);
-                Server.this.init();
+            public void process(Call call, Response response, String content) {
+                String ret = WxUtil.getValueFromXml(content, "ret");
+                if ("0".equals(ret)) {
+                    user.setSkey(WxUtil.getValueFromXml(content, "skey"));
+                    user.setPassTicket(WxUtil.getValueFromXml(content, "pass_ticket"));
+                    user.setUin(WxUtil.getValueFromXml(content, "wxuin"));
+                    List<Cookie> cookies = Cookie.parseAll(call.request().url(), response.headers());
+                    Optional<Cookie> wxSidCookie = cookies.stream().filter(cookie -> "wxsid".equals(cookie.name())).findFirst();
+                    if (wxSidCookie.isPresent()) {
+                        user.setSid(wxSidCookie.get().value());
+                        logger.info("登录成功");
+                        Server.this.init();
+                    } else {
+                        logger.warn("微信登录异常,没有读取到wxsid");
+                    }
+                } else {
+                    String message = WxUtil.getValueFromXml(content, "message");
+                    logger.error("WEB微信登录异常 ret:{} message:{}", ret, message);
+                }
             }
         });
     }
@@ -76,29 +206,35 @@ public class Server implements Runnable {
      * send status notify
      */
     private void statusNotify() {
-
+        Request.Builder builder = initRequestBuilder(WxConst.STATUS_NOTIFY, "lang", "zh_CN", "pass_ticket", user.getPassTicket());
+        Map<String, Object> requestBody = baseRequest();
+        requestBody.put("Code", 3);
+        requestBody.put("FromUserName", user.getUserName());
+        requestBody.put("ToUserName", user.getUserName());
+        requestBody.put("ClientMsgId", System.currentTimeMillis());
+        WxUtil.jsonRequest(requestBody, builder::post);
+        client.newCall(builder.build()).enqueue(new BaseCallback() {
+            @Override
+            public void process(Call call, Response response, String content) {
+                logger.info("WX登录StatusNotify send success");
+            }
+        });
     }
 
     /**
      * 获取二维码 以及 UUID
      */
     private void queryNewUUID() {
-        Request request = initRequest(WxConst.QR_CODE_API, "appid", appId);
-        client.newCall(request).enqueue(new Callback() {
+        Request request = initRequestBuilder(WxConst.QR_CODE_API, "appid", appId).build();
+        client.newCall(request).enqueue(new BaseCallback() {
             @Override
-            public void onFailure(Call call, IOException e) {
-                logger.error("{}", call.request().url().toString(), e);
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                String content = ResposeReadUtils.read(response);
+            public void process(Call call, Response response, String content) {
                 int idx = content.indexOf("window.QRLogin.uuid");
                 if (idx > -1) {
                     idx = content.indexOf("\"", idx);
                     int e_idx = content.indexOf("\"", idx + 1);
-                    Server.this.uuid = content.substring(idx + 1, e_idx);
-                    logger.warn("UUID获取成功 https://login.weixin.qq.com/qrcode/{}", Server.this.uuid);
+                    Server.this.user.setUuid(content.substring(idx + 1, e_idx));
+                    logger.warn("UUID获取成功 https://login.weixin.qq.com/qrcode/{}", Server.this.user.getUuid());
                     Server.this.waitForLogin();
                 } else {
                     logger.warn("没有正常获取到UUID");
@@ -116,39 +252,45 @@ public class Server implements Runnable {
      * 等待用户客户端点击登录
      */
     private void waitForLogin() {
-        Request request = initRequest(WxConst.LOGIN_CHECK_API, "loginicon", "true", "uuid", this.uuid, "tip", "1", "r", WxUtil.random(10), "_", System.currentTimeMillis());
-        client.newCall(request).enqueue(new Callback() {
+        Request request = initRequestBuilder(WxConst.LOGIN_CHECK_API, "loginicon", "true", "uuid", this.user.getUuid(), "tip", "1", "r", WxUtil.random(10), "_", System.currentTimeMillis()).build();
+        client.newCall(request).enqueue(new BaseCallback() {
             @Override
-            public void onFailure(Call call, IOException e) {
-                logger.error("{}", call.request().url().toString(), e);
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                String content = ResposeReadUtils.read(response);
+            void process(Call call, Response response, String content) {
                 String status = StringUtils.substringBetween(content, "window.code=", ";");
-                String url = StringUtils.substringBetween(content, "window.redirect_uri=\"", "\"");
-                if ("200".equals(status)) {
-                    HttpUrl httpUrl = HttpUrl.parse(url);
-                    Server.this.host = httpUrl.host();
-                    Server.this.login(url);
-                } else if ("201".equals(status)) {
-                    logger.info("请点击手机客户端确认登录");
-                    try {
-                        TimeUnit.SECONDS.sleep(3);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                    reCall(call, this);
-                } else {
-                    logger.info("请用手机客户端扫码登录web微信");
-                    reCall(call, this);
+                switch (status) {
+                    case "200":
+                        String url = StringUtils.substringBetween(content, "window.redirect_uri=\"", "\"");
+                        HttpUrl httpUrl = HttpUrl.parse(url);
+                        Server.this.host = httpUrl.host();
+                        Server.this.login(url);
+                        break;
+                    case "201":
+                        logger.info("请点击手机客户端确认登录");
+                        Server.this.user.setUserAvatar(StringUtils.substringBetween(content, "window.userAvatar = '", "';"));
+                        WxUtil.sleep(2);
+                        waitForLogin();
+                        break;
+                    case "408":
+                        logger.info("请用手机客户端扫码登录web微信");
+                        waitForLogin();
+                        break;
+                    case "400":
+                        logger.info("二维码失效");
+                        Server.this.queryNewUUID();
+                        break;
+                    default:
+                        logger.info("扫码登录发生未知异常 服务器响应:{}", content);
                 }
             }
         });
     }
 
-
+    /**
+     * 重新执行请求
+     *
+     * @param call
+     * @param callback
+     */
     private void reCall(Call call, Callback callback) {
         Request request = call.request().newBuilder().build();
         client.newCall(request).enqueue(callback);
@@ -161,10 +303,10 @@ public class Server implements Runnable {
      * @param path
      * @return
      */
-    private Request initRequest(String path, Object... params) {
+    private Request.Builder initRequestBuilder(String path, Object... params) {
         HttpUrl.Builder urlBuilder = new HttpUrl.Builder();
         if (path.startsWith("https://")) {
-            urlBuilder = HttpUrl.parse(path).newBuilder();
+            urlBuilder = HttpUrl.parse(path.replace("{host}", this.host)).newBuilder();
         } else {
             urlBuilder.scheme("https");
             urlBuilder.host(this.host);
@@ -186,7 +328,56 @@ public class Server implements Runnable {
         builder.header("Accept-Encoding", "gzip, deflate, br");
         builder.header("Connection", "keep-alive");
         builder.header("Accept-Language", "zh-CN,zh;q=0.8,en;q=0.6,en-US;q=0.4,zh-TW;q=0.2,ja;q=0.2");
+        return builder;
+    }
 
-        return builder.build();
+    /**
+     * 请求基本信息
+     *
+     * @return
+     */
+    private Map<String, Object> baseRequest() {
+        Map<String, String> baseRequest = new HashMap<>();
+        baseRequest.put("Uin", user.getUin());
+        baseRequest.put("Sid", user.getSid());
+        baseRequest.put("Skey", user.getSkey());
+        baseRequest.put("DeviceID", WxUtil.randomDeviceId());
+        Map<String, Object> wrap = new HashMap<>();
+        wrap.put("BaseRequest", baseRequest);
+        return wrap;
+    }
+
+    private String syncKey() {
+        JSONArray array = user.getSyncKey().getJSONArray("List");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < array.size(); i++) {
+            JSONObject key = array.getJSONObject(i);
+            if (sb.length() > 0) {
+                sb.append("|");
+            }
+            sb.append(key.getString("Key")).append("_").append(key.getString("Val"));
+        }
+        return sb.toString();
+    }
+
+    public abstract class BaseCallback implements Callback {
+
+        @Override
+        public void onFailure(Call call, IOException e) {
+            logger.error("{}", call.request().url().toString(), e);
+            reCall(call, this);
+        }
+
+        @Override
+        public void onResponse(Call call, Response response) throws IOException {
+            try {
+                String content = ResponseReadUtils.read(response);
+                this.process(call, response, content);
+            } finally {
+                IOUtils.closeQuietly(response);
+            }
+        }
+
+        abstract void process(Call call, Response response, String content);
     }
 }

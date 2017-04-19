@@ -1,22 +1,61 @@
 package me.robin.wx.robot.frame.util;
 
 import okhttp3.Response;
+import org.apache.commons.io.IOUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.zip.DataFormatException;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.Inflater;
 
 /**
  * Created by xuanlubin on 2017/4/18.
  */
-public class ResposeReadUtils {
+public class ResponseReadUtils {
+
+    private static final Logger logger = LoggerFactory.getLogger(ResponseReadUtils.class);
+
     public static String read(Response response) throws IOException {
-        if ("deflate".equalsIgnoreCase(response.header("Content-Encoding"))) {
+        String contentEncoding = response.header("Content-Encoding");
+        if ("deflate".equalsIgnoreCase(contentEncoding)) {
             return tranInflaterInputStream(response.body().bytes());
+        } else if ("gzip".equalsIgnoreCase(contentEncoding)) {
+            return uncompressGzip(response.body().bytes());
         } else {
             return response.body().string();
         }
+    }
+
+    public static String uncompressGzip(byte[] b) {
+        if (b == null || b.length == 0) {
+            return null;
+        }
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(b.length);
+        ByteArrayInputStream in = new ByteArrayInputStream(b);
+
+        try {
+            GZIPInputStream gunzip = new GZIPInputStream(in);
+            byte[] buffer = new byte[256];
+            int n;
+            while ((n = gunzip.read(buffer)) >= 0) {
+                bos.write(buffer, 0, n);
+            }
+        } catch (IOException e) {
+            logger.warn("Gzip 解压异常:{}", e.getMessage());
+        } finally {
+            try {
+                in.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+
+        return bos.toString();
     }
 
     private static boolean isZLibHeader(byte[] bytes) {
