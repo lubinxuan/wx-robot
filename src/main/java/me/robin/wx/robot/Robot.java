@@ -57,12 +57,12 @@ public class Robot {
                     String MsgId = message.getString("MsgId");
                     String FromUserName = message.getString("FromUserName");
                     String ToUserName = message.getString("ToUserName");
-                    String Content = message.getString("Content");
+                    String Content = WxUtil.revertXml(message.getString("Content"));
                     int msgType = message.getIntValue("MsgType");
+
                     logger.debug("收到新消息:{} {} {} {} {}", MsgId, FromUserName, ToUserName, Content, msgType);
                     switch (msgType) {
                         case 10002://撤销消息
-                            Content = WxUtil.revertXml(Content);
                             server.sendTextMessage(FromUserName, "你发了：" + Content, messageSendListener);
                             break;
                         default:

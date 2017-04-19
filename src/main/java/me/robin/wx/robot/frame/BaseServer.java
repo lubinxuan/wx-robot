@@ -148,6 +148,8 @@ public class BaseServer implements Runnable {
                         }
                         break;
                     case 1101:
+                        login = false;
+                        queryNewUUID();
                         logger.info("客户端退出了");
                         return;
                     default:
