@@ -11,6 +11,8 @@ import me.robin.wx.robot.frame.util.WxUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -35,7 +37,8 @@ public class Robot {
 
             @Override
             public void serverNotReady(String user, String message) {
-
+                server.waitLoginDone();
+                server.sendTextMessage(user, message, this);
             }
 
             @Override
@@ -98,6 +101,12 @@ public class Robot {
             server.sendTextMessage("Lubin.Xuan,AgFighter", "消息发送：" + System.currentTimeMillis(), messageSendListener);
             TimeUnit.SECONDS.sleep(1);
         }*/
-        TimeUnit.HOURS.sleep(1);
+        new Timer().schedule(new TimerTask() {
+            @Override
+            public void run() {
+                server.sendTextMessage("AgFighter", "消息发送：" + System.currentTimeMillis(), messageSendListener);
+            }
+        }, 0, 15 * 60 * 1000);
+        TimeUnit.DAYS.sleep(5);
     }
 }

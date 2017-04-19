@@ -35,7 +35,7 @@ public class BaseServer implements Runnable {
 
     private String appId;
 
-    LoginUser user = new LoginUser();
+    final LoginUser user = new LoginUser();
 
     OkHttpClient client;
 
@@ -63,8 +63,21 @@ public class BaseServer implements Runnable {
         this.queryNewUUID();
     }
 
-    boolean checkLogin(){
+    boolean checkLogin() {
         return login;
+    }
+
+    public void waitLoginDone() {
+        if (checkLogin()) {
+            return;
+        }
+        synchronized (user) {
+            try {
+                user.wait();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     /**
@@ -85,7 +98,6 @@ public class BaseServer implements Runnable {
                     statusNotify();
                     contactService.updateContact(responseJson.getJSONArray("ContactList"));
                     getContact();
-                    login = true;
                 } else {
                     String message = TypeUtils.castToString(JSONPath.eval(responseJson, "BaseResponse.ErrMsg"));
                     logger.warn("web微信初始化失败 ret:{} errMsg:{}", ret, message);
@@ -107,6 +119,10 @@ public class BaseServer implements Runnable {
                 syncCheck();
                 batchGetContact();
                 contactService.updateContact(content.getJSONArray("MemberList"));
+                login = true;
+                synchronized (BaseServer.this.user) {
+                    BaseServer.this.user.notifyAll();
+                }
             }
         });
     }
@@ -259,7 +275,7 @@ public class BaseServer implements Runnable {
                     idx = content.indexOf("\"", idx);
                     int e_idx = content.indexOf("\"", idx + 1);
                     BaseServer.this.user.setUuid(content.substring(idx + 1, e_idx));
-                    statusListener.onUUIDSuccess("https://login.weixin.qq.com/qrcode/"+BaseServer.this.user.getUuid());
+                    statusListener.onUUIDSuccess("https://login.weixin.qq.com/qrcode/" + BaseServer.this.user.getUuid());
                     BaseServer.this.waitForLogin();
                 } else {
                     logger.warn("没有正常获取到UUID");
