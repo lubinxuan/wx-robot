@@ -1,6 +1,6 @@
 package me.robin.wx.robot.frame.service.impl;
 
-import com.alibaba.fastjson.JSONObject;
+import me.robin.wx.robot.frame.model.WxMsg;
 import me.robin.wx.robot.frame.service.MessageService;
 
 import java.util.Map;
@@ -15,9 +15,9 @@ import java.util.concurrent.LinkedBlockingQueue;
  */
 public class DefaultMessageServiceImpl implements MessageService {
 
-    private Queue<JSONObject> historyMessageList = new LinkedBlockingQueue<>();
+    private Queue<WxMsg> historyMessageList = new LinkedBlockingQueue<>();
 
-    private Map<String, JSONObject> messageIdUserMap = new ConcurrentHashMap<>();
+    private Map<String, WxMsg> messageIdUserMap = new ConcurrentHashMap<>();
 
     public DefaultMessageServiceImpl() {
         new Timer("HistoryMessageClear-Task").schedule(new TimerTask() {
@@ -25,15 +25,15 @@ public class DefaultMessageServiceImpl implements MessageService {
             public void run() {
                 long expire = System.currentTimeMillis() / 1000 - 3 * 60;
                 while (true) {
-                    JSONObject message = historyMessageList.peek();
+                    WxMsg message = historyMessageList.peek();
                     if (null == message) {
                         return;
                     }
-                    long createTime = message.getLongValue("CreateTime");
+                    long createTime = message.getCreateTime();
                     if (createTime < expire) {
                         historyMessageList.poll();
-                        String fromUser = message.getString("FromUserName");
-                        String msgId = message.getString("MsgId");
+                        String fromUser = message.getFromUserName();
+                        String msgId = message.getMsgID();
                         String id = fromUser + "$$" + msgId;
                         messageIdUserMap.remove(id);
                     } else {
@@ -45,9 +45,9 @@ public class DefaultMessageServiceImpl implements MessageService {
     }
 
     @Override
-    public void saveMessage(JSONObject message) {
-        String fromUser = message.getString("FromUserName");
-        String msgId = message.getString("MsgId");
+    public void saveMessage(WxMsg message) {
+        String fromUser = message.getFromUserName();
+        String msgId = message.getMsgID();
         String id = fromUser + "$$" + msgId;
         messageIdUserMap.computeIfAbsent(id, s -> {
             historyMessageList.offer(message);
@@ -56,7 +56,7 @@ public class DefaultMessageServiceImpl implements MessageService {
     }
 
     @Override
-    public JSONObject findMessageByUserAndMid(String fromUser, String msgId) {
+    public WxMsg findMessageByUserAndMid(String fromUser, String msgId) {
         return messageIdUserMap.get(fromUser + "$$" + msgId);
     }
 }

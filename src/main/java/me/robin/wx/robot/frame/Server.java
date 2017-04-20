@@ -11,6 +11,7 @@ import me.robin.wx.robot.frame.util.WxUtil;
 import okhttp3.Call;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,7 +55,12 @@ public class Server extends BaseServer {
             return;
         }
 
-        if(type==1){
+        if (StringUtils.equals(wxUser.getUserName(), this.user.getUserName())) {
+            logger.warn("WEB微信不能给自己发消息");
+            return;
+        }
+
+        if (type == 1) {
 
         }
 

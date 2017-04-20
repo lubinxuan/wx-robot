@@ -22,8 +22,6 @@ import java.io.IOException;
 import java.net.CookieStore;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 /**
  * Created by xuanlubin on 2017/4/18.
@@ -420,7 +418,7 @@ public class BaseServer implements Runnable {
      * @param delayTask   任务
      * @param delaySecond 延时时间
      */
-    private void delayTask(DelayTask delayTask, float delaySecond) {
+    void delayTask(DelayTask delayTask, float delaySecond) {
         delayTaskScheduler.schedule(new TimerTask() {
             @Override
             public void run() {

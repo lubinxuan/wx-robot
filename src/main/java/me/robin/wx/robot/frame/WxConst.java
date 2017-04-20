@@ -4,6 +4,10 @@ package me.robin.wx.robot.frame;
  * Created by xuanlubin on 2017/4/18.
  */
 public interface WxConst {
+
+    //web微信appId
+    String APP_ID = "wx782c26e4c19acffb";
+
     String QR_CODE_API = "https://login.weixin.qq.com/jslogin";
     String LOGIN_CHECK_API = "https://login.weixin.qq.com/cgi-bin/mmwebwx-bin/login";
     String INIT_URL = "/cgi-bin/mmwebwx-bin/webwxinit";
@@ -25,6 +29,7 @@ public interface WxConst {
         int VIDEO = 43;
         int APP_MSG = 49;
         int SYS_MSG = 10000;
+        int REVOKE_MSG = 10002;
     }
 
     interface SpecialMsg{

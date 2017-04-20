@@ -1,12 +1,15 @@
 package me.robin.wx.robot.frame.listener;
 
 import com.alibaba.fastjson.JSONArray;
+import me.robin.wx.robot.frame.MsgHandler;
 import me.robin.wx.robot.frame.Server;
 
 /**
  * Created by xuanlubin on 2017/4/19.
  */
 public interface ServerStatusListener {
+
+    void registerMessageHandler(int msgType, MsgHandler msgHandler);
 
     void onUUIDSuccess(String url);
 

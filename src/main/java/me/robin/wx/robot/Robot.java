@@ -1,13 +1,16 @@
 package me.robin.wx.robot;
 
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
 import me.robin.wx.robot.frame.Server;
+import me.robin.wx.robot.frame.WxConst;
 import me.robin.wx.robot.frame.listener.MessageSendListener;
-import me.robin.wx.robot.frame.listener.ServerStatusListener;
+import me.robin.wx.robot.frame.listener.impl.DefaultServerStatusListener;
+import me.robin.wx.robot.frame.message.AppMsgHandler;
+import me.robin.wx.robot.frame.message.MessageSaveHandler;
+import me.robin.wx.robot.frame.message.RevokeMsgHandler;
 import me.robin.wx.robot.frame.service.ContactService;
+import me.robin.wx.robot.frame.service.MessageService;
 import me.robin.wx.robot.frame.service.impl.ContactServiceImpl;
-import me.robin.wx.robot.frame.util.WxUtil;
+import me.robin.wx.robot.frame.service.impl.DefaultMessageServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,8 +31,7 @@ public class Robot {
 
     public static void main(String[] args) throws InterruptedException {
         ContactService contactService = new ContactServiceImpl();
-        Server server = new Server("wx782c26e4c19acffb", contactService);
-
+        Server server = new Server(WxConst.APP_ID, contactService);
         MessageSendListener messageSendListener = new MessageSendListener() {
             @Override
             public void userNotFound(String user, String message) {
@@ -53,56 +55,23 @@ public class Robot {
             }
         };
 
-        server.setStatusListener(new ServerStatusListener() {
+        MessageService messageService = new DefaultMessageServiceImpl();
 
-            @Override
-            public void onUUIDSuccess(String url) {
-                logger.debug("登录二维码:{}", url);
-            }
+        DefaultServerStatusListener serverStatusListener = new DefaultServerStatusListener();
+        RevokeMsgHandler revokeMsgHandler = new RevokeMsgHandler(messageSendListener,messageService,contactService);
+        revokeMsgHandler.enable("demo");
+        serverStatusListener.registerMessageHandler(WxConst.MessageType.REVOKE_MSG, revokeMsgHandler);
+        serverStatusListener.registerMessageHandler(WxConst.MessageType.APP_MSG, new AppMsgHandler());
 
-            @Override
-            public void onAddMsgList(JSONArray addMsgList, Server server) {
-                for (int i = 0; i < addMsgList.size(); i++) {
-                    JSONObject message = addMsgList.getJSONObject(i);
-                    String MsgId = message.getString("MsgId");
-                    String FromUserName = message.getString("FromUserName");
-                    String ToUserName = message.getString("ToUserName");
-                    String Content = WxUtil.revertXml(message.getString("Content"));
-                    Long CreateTime = message.getLong("CreateTime");
-                    int msgType = message.getIntValue("MsgType");
+        MessageSaveHandler messageSaveHandler = new MessageSaveHandler(messageService);
+        serverStatusListener.registerMessageHandler(WxConst.MessageType.TEXT, messageSaveHandler);
+        serverStatusListener.registerMessageHandler(WxConst.MessageType.IMG, messageSaveHandler);
+        serverStatusListener.registerMessageHandler(WxConst.MessageType.VIDEO, messageSaveHandler);
+        serverStatusListener.registerMessageHandler(WxConst.MessageType.VOICE, messageSaveHandler);
 
-                    logger.debug("收到新消息:{} {} {} {} {}", MsgId, FromUserName, ToUserName, Content, msgType);
-                    switch (msgType) {
-                        case 10002://撤销消息
-                            server.sendTextMessage(FromUserName, "你发了：" + Content, messageSendListener);
-                            break;
-                        default:
-                            break;
-                    }
-                }
-            }
-
-            @Override
-            public void onModContactList(JSONArray modContactList, Server server) {
-
-            }
-
-            @Override
-            public void onDelContactList(JSONArray delContactList, Server server) {
-
-            }
-
-            @Override
-            public void onModChatRoomMemberList(JSONArray modChatRoomMemberList, Server server) {
-
-            }
-        });
+        server.setStatusListener(serverStatusListener);
         server.run();
 
-        /*while (true) {
-            server.sendTextMessage("Lubin.Xuan,AgFighter", "消息发送：" + System.currentTimeMillis(), messageSendListener);
-            TimeUnit.SECONDS.sleep(1);
-        }*/
         new Timer().schedule(new TimerTask() {
             @Override
             public void run() {
