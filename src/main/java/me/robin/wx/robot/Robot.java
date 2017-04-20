@@ -11,6 +11,7 @@ import me.robin.wx.robot.frame.util.WxUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Date;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
@@ -67,6 +68,7 @@ public class Robot {
                     String FromUserName = message.getString("FromUserName");
                     String ToUserName = message.getString("ToUserName");
                     String Content = WxUtil.revertXml(message.getString("Content"));
+                    Long CreateTime = message.getLong("CreateTime");
                     int msgType = message.getIntValue("MsgType");
 
                     logger.debug("收到新消息:{} {} {} {} {}", MsgId, FromUserName, ToUserName, Content, msgType);
@@ -104,7 +106,7 @@ public class Robot {
         new Timer().schedule(new TimerTask() {
             @Override
             public void run() {
-                server.sendTextMessage("AgFighter", "消息发送：" + System.currentTimeMillis(), messageSendListener);
+                server.sendTextMessage("AgFighter", "消息发送：" + new Date(), messageSendListener);
             }
         }, 0, 15 * 60 * 1000);
         TimeUnit.DAYS.sleep(5);

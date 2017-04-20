@@ -20,11 +20,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.CookieStore;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Created by xuanlubin on 2017/4/18.
@@ -32,6 +31,8 @@ import java.util.concurrent.TimeUnit;
 public class BaseServer implements Runnable {
 
     private static final Logger logger = LoggerFactory.getLogger(BaseServer.class);
+
+    private static final Timer delayTaskScheduler = new Timer("DelayTaskScheduler");
 
     private String appId;
 
@@ -188,9 +189,16 @@ public class BaseServer implements Runnable {
             @Override
             void process(Call call, Response response, JSONObject syncRsp) {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(syncRsp, "BaseResponse.Ret"));
+                boolean syncNow = true;
                 if (null != ret && 0 == ret) {
                     logger.debug("同步成功");
-                    user.setSyncKey(syncRsp.getJSONObject("SyncKey"));
+                    JSONObject syncKey = syncRsp.getJSONObject("SyncCheckKey");
+                    if (StringUtils.equals(syncKey.toJSONString(), user.getSyncKey().toJSONString())) {
+                        logger.warn("同步key没有更新");
+                        syncNow = false;
+                    } else {
+                        user.setSyncKey(syncKey);
+                    }
                     String skey = syncRsp.getString("SKey");
                     if (StringUtils.isNotBlank(skey)) {
                         logger.info("更新用户SKey");
@@ -205,7 +213,12 @@ public class BaseServer implements Runnable {
                 } else {
                     logger.warn("同步异常:{}", syncRsp.toJSONString());
                 }
-                syncCheck();
+
+                if (syncNow) {
+                    syncCheck();
+                } else {
+                    delayTask(BaseServer.this::syncCheck, 3);
+                }
             }
         });
     }
@@ -279,11 +292,7 @@ public class BaseServer implements Runnable {
                     BaseServer.this.waitForLogin();
                 } else {
                     logger.warn("没有正常获取到UUID");
-                    try {
-                        TimeUnit.SECONDS.sleep(2);
-                    } catch (Exception ignore) {
-                    }
-                    reCall(call, this);
+                    delayTask(() -> reCall(call, this), 2);
                 }
             }
         });
@@ -308,8 +317,7 @@ public class BaseServer implements Runnable {
                     case "201":
                         logger.info("请点击手机客户端确认登录");
                         BaseServer.this.user.setUserAvatar(StringUtils.substringBetween(content, "window.userAvatar = '", "';"));
-                        WxUtil.sleep(2);
-                        waitForLogin();
+                        delayTask(BaseServer.this::waitForLogin, 2);
                         break;
                     case "408":
                         logger.info("请用手机客户端扫码登录web微信");
@@ -404,6 +412,21 @@ public class BaseServer implements Runnable {
             sb.append(key.getString("Key")).append("_").append(key.getString("Val"));
         }
         return sb.toString();
+    }
+
+    /**
+     * 延时任务
+     *
+     * @param delayTask   任务
+     * @param delaySecond 延时时间
+     */
+    private void delayTask(DelayTask delayTask, float delaySecond) {
+        delayTaskScheduler.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                delayTask.execute();
+            }
+        }, (long) (delaySecond * 1000));
     }
 
     public void setStatusListener(ServerStatusListener statusListener) {

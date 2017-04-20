@@ -35,6 +35,11 @@ public class Server extends BaseServer {
      * @param messageSendListener
      */
     public void sendTextMessage(String user, String message, MessageSendListener messageSendListener) {
+        sendTextMessage(user, message, 0, messageSendListener);
+    }
+
+
+    public void sendTextMessage(String user, String message, int type, MessageSendListener messageSendListener) {
 
         if (!checkLogin()) {
             logger.info("还未完成登录,不能发送消息");
@@ -47,6 +52,10 @@ public class Server extends BaseServer {
             logger.info("找不到目标用户,不能发送消息");
             messageSendListener.userNotFound(user, message);
             return;
+        }
+
+        if(type==1){
+
         }
 
         Request.Builder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxsendmsg");

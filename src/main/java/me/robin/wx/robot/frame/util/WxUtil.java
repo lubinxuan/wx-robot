@@ -48,21 +48,13 @@ public class WxUtil {
         return StringUtils.substringBetween(xml, "<" + element + ">", "</" + element + ">");
     }
 
-    public static void sleep(long time){
-        try {
-            TimeUnit.SECONDS.sleep(time);
-        } catch (InterruptedException ignored) {
-
-        }
-    }
-
-    public static void jsonRequest(Object data, Consumer<RequestBody> consumer){
+    public static void jsonRequest(Object data, Consumer<RequestBody> consumer) {
         RequestBody requestBody = RequestBody.create(MediaType.parse("application/json;charset=utf-8"), JSON.toJSONString(data));
         consumer.accept(requestBody);
     }
 
-    public static String revertXml(String content){
-        content = StringUtils.replace(content,"&lt;","<");
-        return StringUtils.replace(content,"&gt;",">");
+    public static String revertXml(String content) {
+        content = StringUtils.replace(content, "&lt;", "<");
+        return StringUtils.replace(content, "&gt;", ">");
     }
 }
