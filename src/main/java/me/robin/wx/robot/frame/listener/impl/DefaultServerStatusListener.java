@@ -36,16 +36,19 @@ public class DefaultServerStatusListener implements ServerStatusListener {
     @Override
     public void onAddMsgList(JSONArray addMsgList, Server server) {
         for (int i = 0; i < addMsgList.size(); i++) {
-            JSONObject message = addMsgList.getJSONObject(i);
-            String MsgId = message.getString("MsgId");
-            String FromUserName = message.getString("FromUserName");
-            String ToUserName = message.getString("ToUserName");
-            String Content = WxUtil.revertXml(message.getString("Content"));
-            int msgType = message.getIntValue("MsgType");
+            WxMsg message = addMsgList.getObject(i, WxMsg.class);
+            String MsgId = message.getMsgID();
+            String FromUserName = message.getFromUserName();
+            String ToUserName = message.getToUserName();
+            message.setContent(WxUtil.revertXml(message.getContent()));
+            String Content = message.getContent();
+            int msgType = message.getMsgType();
             logger.debug("收到新消息:{} {} {} {} {}", MsgId, FromUserName, ToUserName, Content, msgType);
             MsgHandler msgHandler = this.handlerMap.get(msgType);
             if (null != msgHandler) {
-                msgHandler.handle(message.toJavaObject(WxMsg.class), server);
+                msgHandler.handle(message, server);
+            } else {
+                logger.debug("没有定义消息处理器 msgType:{}", msgType);
             }
         }
     }
