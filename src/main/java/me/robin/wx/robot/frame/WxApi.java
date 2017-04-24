@@ -13,4 +13,8 @@ public interface WxApi {
     void sendTextMessage(String user, String message, MessageSendListener messageSendListener);
 
     void sendTextMessage(String user, String message, int type, MessageSendListener messageSendListener);
+
+    default void createGroup(){}
+    default void modifyGroupName(){}
+    default void deleteGroupUser(){}
 }
