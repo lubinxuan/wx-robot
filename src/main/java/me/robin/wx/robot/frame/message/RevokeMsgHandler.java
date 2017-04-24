@@ -1,7 +1,7 @@
 package me.robin.wx.robot.frame.message;
 
+import me.robin.wx.robot.frame.WxApi;
 import me.robin.wx.robot.frame.MsgHandler;
-import me.robin.wx.robot.frame.Server;
 import me.robin.wx.robot.frame.listener.MessageSendListener;
 import me.robin.wx.robot.frame.model.WxGroup;
 import me.robin.wx.robot.frame.model.WxMsg;
@@ -40,7 +40,7 @@ public class RevokeMsgHandler implements MsgHandler {
     }
 
     @Override
-    public void handle(WxMsg message, Server server) {
+    public void handle(WxMsg message, WxApi api) {
         WxUser wxUser = contactService.queryUserByUserName(message.getFromUserName());
         if (null != wxUser) {
             if (!enableUserSet.contains(wxUser.getNickName()) && !enableUserSet.contains(wxUser.getAlias()) && !enableUserSet.contains(wxUser.getRemarkName())) {
@@ -54,12 +54,11 @@ public class RevokeMsgHandler implements MsgHandler {
         String messageContent;
         if (null != wxMsg) {
             String appendContent;
-            if (wxUser instanceof WxGroup) {
-                String sendUserName = StringUtils.substringBefore(wxMsg.getContent(), ":");
-                WxUser sendUser = contactService.queryUserByUserName(sendUserName);
+            if (wxMsg.isGroupMsg()) {
+                WxUser sendUser = contactService.queryUserByUserName(wxMsg.getSendUserName());
                 if (null != sendUser) {
                     messageContent = sendUser.getNickName() + " 撤销了这条消息:";
-                    appendContent = StringUtils.substringAfter(wxMsg.getContent(), ":");
+                    appendContent = wxMsg.getSendContent();
                 } else {
                     messageContent = "楼上撤销了这条消息:";
                     appendContent = wxMsg.getContent();
@@ -75,6 +74,6 @@ public class RevokeMsgHandler implements MsgHandler {
         } else {
             messageContent = "真幸运没找到楼上撤销的消息";
         }
-        server.sendTextMessage(sendToUserName, messageContent, messageSendListener);
+        api.sendTextMessage(sendToUserName, messageContent, messageSendListener);
     }
 }

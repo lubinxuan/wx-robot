@@ -1,9 +1,8 @@
 package me.robin.wx.robot.frame.listener.impl;
 
 import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import me.robin.wx.robot.frame.WxApi;
 import me.robin.wx.robot.frame.MsgHandler;
-import me.robin.wx.robot.frame.Server;
 import me.robin.wx.robot.frame.listener.ServerStatusListener;
 import me.robin.wx.robot.frame.message.MsgChainHandler;
 import me.robin.wx.robot.frame.model.WxMsg;
@@ -34,7 +33,7 @@ public class DefaultServerStatusListener implements ServerStatusListener {
     }
 
     @Override
-    public void onAddMsgList(JSONArray addMsgList, Server server) {
+    public void onAddMsgList(JSONArray addMsgList, WxApi api) {
         for (int i = 0; i < addMsgList.size(); i++) {
             WxMsg message = addMsgList.getObject(i, WxMsg.class);
             String MsgId = message.getMsgID();
@@ -46,7 +45,7 @@ public class DefaultServerStatusListener implements ServerStatusListener {
             logger.debug("收到新消息:{} {} {} {} {}", MsgId, FromUserName, ToUserName, Content, msgType);
             MsgHandler msgHandler = this.handlerMap.get(msgType);
             if (null != msgHandler) {
-                msgHandler.handle(message, server);
+                msgHandler.handle(message, api);
             } else {
                 logger.debug("没有定义消息处理器 msgType:{}", msgType);
             }
@@ -54,17 +53,17 @@ public class DefaultServerStatusListener implements ServerStatusListener {
     }
 
     @Override
-    public void onModContactList(JSONArray modContactList, Server server) {
+    public void onModContactList(JSONArray modContactList, WxApi api) {
 
     }
 
     @Override
-    public void onDelContactList(JSONArray delContactList, Server server) {
+    public void onDelContactList(JSONArray delContactList, WxApi api) {
 
     }
 
     @Override
-    public void onModChatRoomMemberList(JSONArray modChatRoomMemberList, Server server) {
+    public void onModChatRoomMemberList(JSONArray modChatRoomMemberList, WxApi api) {
 
     }
 }

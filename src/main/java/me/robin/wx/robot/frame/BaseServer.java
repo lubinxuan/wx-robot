@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Created by xuanlubin on 2017/4/18.
  */
-public class BaseServer implements Runnable {
+public abstract class BaseServer implements Runnable, WxApi {
 
     private static final Logger logger = LoggerFactory.getLogger(BaseServer.class);
 
@@ -77,6 +77,11 @@ public class BaseServer implements Runnable {
                 e.printStackTrace();
             }
         }
+    }
+
+    @Override
+    public LoginUser loginUser() {
+        return login ? user : null;
     }
 
     /**

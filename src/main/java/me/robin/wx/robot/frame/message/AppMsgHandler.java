@@ -1,7 +1,7 @@
 package me.robin.wx.robot.frame.message;
 
+import me.robin.wx.robot.frame.WxApi;
 import me.robin.wx.robot.frame.MsgHandler;
-import me.robin.wx.robot.frame.Server;
 import me.robin.wx.robot.frame.model.WxMsg;
 
 /**
@@ -9,7 +9,7 @@ import me.robin.wx.robot.frame.model.WxMsg;
  */
 public class AppMsgHandler implements MsgHandler {
     @Override
-    public void handle(WxMsg message, Server server) {
+    public void handle(WxMsg message, WxApi api) {
 
     }
 }

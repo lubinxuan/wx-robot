@@ -1,6 +1,7 @@
 package me.robin.wx.robot.frame.model;
 
 import com.alibaba.fastjson.annotation.JSONField;
+import org.apache.commons.lang3.StringUtils;
 
 /**
  * Created by xuanlubin on 2017/4/20.
@@ -135,5 +136,17 @@ public class WxMsg {
 
     public void setRecommendInfo(RecommendInfo recommendInfo) {
         this.recommendInfo = recommendInfo;
+    }
+
+    public boolean isGroupMsg() {
+        return StringUtils.startsWith(fromUserName, "@@");
+    }
+
+    public String getSendUserName() {
+        return StringUtils.substringBefore(content, ":");
+    }
+
+    public String getSendContent() {
+        return StringUtils.substringAfter(content, ":");
     }
 }
