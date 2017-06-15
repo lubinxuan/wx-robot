@@ -5,8 +5,13 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>me.robin.wx</groupId>
-    <artifactId>robot</artifactId>
+    <artifactId>web-client-parent</artifactId>
+    <packaging>pom</packaging>
     <version>1.0-SNAPSHOT</version>
+    <modules>
+        <module>web-client-api</module>
+        <module>web-client</module>
+    </modules>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -63,7 +68,6 @@
         </dependency>
     </dependencies>
 
-
     <build>
         <plugins>
             <!-- 设置源文件编码方式 -->
@@ -86,4 +90,18 @@
             </plugin>
         </plugins>
     </build>
+
+    <distributionManagement>
+        <repository>
+            <id>deployUser</id>
+            <name>Nexus Release Repository</name>
+            <url>http://192.168.0.152:8088/content/repositories/releases/</url>
+        </repository>
+        <snapshotRepository>
+            <id>deployUser</id>
+            <name>Nexus Snapshot Repository</name>
+            <url>http://192.168.0.152:8088/content/repositories/snapshots/</url>
+        </snapshotRepository>
+    </distributionManagement>
+
 </project>
