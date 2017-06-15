@@ -12,6 +12,7 @@ import me.robin.wx.client.model.LoginUser;
 import me.robin.wx.client.model.WxGroup;
 import me.robin.wx.client.model.WxUser;
 import me.robin.wx.client.service.ContactService;
+import me.robin.wx.client.util.ResponseReadUtils;
 import me.robin.wx.client.util.WxUtil;
 import okhttp3.*;
 import org.apache.commons.io.IOUtils;

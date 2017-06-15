@@ -1,4 +1,4 @@
-package me.robin.wx.client;
+package me.robin.wx.client.util;
 
 import okhttp3.Response;
 import org.slf4j.Logger;
