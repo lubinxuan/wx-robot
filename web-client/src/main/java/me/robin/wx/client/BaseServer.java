@@ -46,13 +46,13 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     protected ContactService contactService;
 
-    private CookieStore cookieStore;
+    protected CookieStore cookieStore;
 
     private volatile boolean login = false;
 
     public BaseServer(String appId, ContactService contactService) {
         this.appId = appId;
-        this.cookieStore = new MemoryCookieStore();
+        this.cookieStore = new MemoryCookieStore(user);
         this.contactService = contactService;
         this.client = new OkHttpClient.Builder()
                 .readTimeout(60, TimeUnit.SECONDS)

@@ -22,6 +22,8 @@ public class LoginUser {
 
     private String sid;
 
+    private String webwxDataTicket;
+
     private String loginHost = "wx.qq.com";
 
     private JSONObject syncKey;
@@ -104,5 +106,13 @@ public class LoginUser {
 
     public void setSyncKey(JSONObject syncKey) {
         this.syncKey = syncKey;
+    }
+
+    public String getWebwxDataTicket() {
+        return webwxDataTicket;
+    }
+
+    public void setWebwxDataTicket(String webwxDataTicket) {
+        this.webwxDataTicket = webwxDataTicket;
     }
 }

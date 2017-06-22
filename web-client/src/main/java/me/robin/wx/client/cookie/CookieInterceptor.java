@@ -1,5 +1,6 @@
 package me.robin.wx.client.cookie;
 
+import me.robin.wx.client.model.LoginUser;
 import okhttp3.Headers;
 import okhttp3.Interceptor;
 import okhttp3.Request;
@@ -42,6 +43,9 @@ public class CookieInterceptor implements Interceptor {
         if (headers.size() > 0) {
             Map<String, List<String>> headersMap = new HashMap<>();
             for (String name : headers.names()) {
+                if (!StringUtils.startsWith(StringUtils.lowerCase(name), "set-cookie")) {
+                    continue;
+                }
                 List<String> values = headers.values(name);
                 headersMap.put(name, values);
             }

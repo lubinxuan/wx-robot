@@ -1,5 +1,7 @@
 package me.robin.wx.client.cookie;
 
+import me.robin.wx.client.model.LoginUser;
+
 import java.net.CookieStore;
 import java.net.HttpCookie;
 import java.net.URI;
@@ -16,11 +18,21 @@ public class MemoryCookieStore implements CookieStore {
     private Map<URI, List<HttpCookie>> uriIndex = new HashMap<URI, List<HttpCookie>>();
     private ReentrantLock lock = new ReentrantLock(false);
 
+    private final LoginUser user;
+
+    public MemoryCookieStore(LoginUser user) {
+        this.user = user;
+    }
 
     public void add(URI var1, HttpCookie var2) {
         if (var2 == null) {
             throw new NullPointerException("cookie is null");
         } else {
+
+            if ("webwx_data_ticket".equalsIgnoreCase(var2.getName())) {
+                this.user.setWebwxDataTicket(var2.getValue());
+            }
+
             this.lock.lock();
 
             try {

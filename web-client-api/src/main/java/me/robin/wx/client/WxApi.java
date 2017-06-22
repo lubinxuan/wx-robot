@@ -16,6 +16,7 @@ public interface WxApi {
     void sendAppMessage(WxMsg message, MessageSendListener messageSendListener);
 
     void sendTextMessage(String user, String message, int type, MessageSendListener messageSendListener);
+    void sendImgMessage(String user,String fileName , byte[] imgBytes, MessageSendListener messageSendListener);
 
     default void createGroup(){}
     default void modifyGroupName(){}
