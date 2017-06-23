@@ -1,6 +1,9 @@
 package me.robin.wx.client.util;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
+import me.robin.wx.client.model.WxGroup;
+import me.robin.wx.client.model.WxUser;
 import okhttp3.MediaType;
 import okhttp3.RequestBody;
 import org.apache.commons.io.FileUtils;
@@ -19,6 +22,15 @@ import java.util.function.Consumer;
 public class WxUtil {
 
     private static final Logger logger = LoggerFactory.getLogger(WxUtil.class);
+
+    public static WxUser parse(JSONObject contact) {
+        String userName = contact.getString("UserName");
+        Class<? extends WxUser> type = WxUser.class;
+        if (StringUtils.startsWith(userName, "@@")) {
+            type = WxGroup.class;
+        }
+        return contact.toJavaObject(type);
+    }
 
     public static String randomDeviceId() {
         return "e" + random(15);
@@ -90,13 +102,13 @@ public class WxUtil {
 
     public static void deleteImgTmpDir(String parentPath) {
         try {
-            FileUtils.deleteDirectory(new File(wxTmpFileDir, "header/"+parentPath));
+            FileUtils.deleteDirectory(new File(wxTmpFileDir, "header/" + parentPath));
         } catch (IOException e) {
             logger.warn("头像文件临时目录删除异常:{}", e.getMessage());
         }
     }
 
-    public static void deleteTmp(){
+    public static void deleteTmp() {
         try {
             FileUtils.deleteDirectory(wxTmpFileDir);
         } catch (IOException e) {

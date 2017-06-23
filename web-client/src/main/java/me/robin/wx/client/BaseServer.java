@@ -50,6 +50,10 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private volatile boolean login = false;
 
+    private static final BiConsumer<Boolean, String> DEFAULT = (aBoolean, s) -> {
+
+    };
+
     public BaseServer(String appId, ContactService contactService) {
         this.appId = appId;
         this.cookieStore = new MemoryCookieStore(user);
@@ -125,12 +129,12 @@ public abstract class BaseServer implements Runnable, WxApi {
             void process(Call call, Response response, JSONObject content) {
                 logger.info("获取到联系人列表");
                 syncCheck();
-                batchGetContact();
                 contactService.updateContact(content.getJSONArray("MemberList"));
                 login = true;
                 synchronized (BaseServer.this.user) {
                     BaseServer.this.user.notifyAll();
                 }
+                batchGetContact();
             }
         });
     }
@@ -139,7 +143,76 @@ public abstract class BaseServer implements Runnable, WxApi {
      * 获取通讯录
      */
     private void batchGetContact() {
+        List<WxGroup> groupList = contactService.listAllGroup();
+        List<Map<String, String>> groupParam = new ArrayList<>();
+        for (WxGroup wxGroup : groupList) {
+            Map<String, String> param = new HashMap<>();
+            param.put("EncryChatRoomId", "");
+            param.put("UserName", wxGroup.getUserName());
+            groupParam.add(param);
+            if (groupParam.size() >= 5) {
+                batchGetContactTask(groupParam);
+            }
+        }
+        batchGetContactTask(groupParam);
+    }
 
+    private void batchGetContactTask(List<Map<String, String>> updateContactList) {
+        if (updateContactList.isEmpty()) {
+            return;
+        }
+        Map<String, Object> baseParam = baseRequest();
+        baseParam.put("Count", updateContactList.size());
+        baseParam.put("List", updateContactList);
+        Request.Builder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxbatchgetcontact", "type", "ex", "r", System.currentTimeMillis(), "lang", "zh_CN");
+        WxUtil.jsonRequest(baseParam, builder::post);
+        updateContactList.clear();
+        client.newCall(builder.build()).enqueue(new BaseJsonCallback() {
+            @Override
+            void process(Call call, Response response, JSONObject content) {
+                Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
+                if (null != ret && ret == 0) {
+                    logger.info("同步到群组信息");
+                    JSONArray contactList = content.getJSONArray("ContactList");
+                    for (int i = 0; i < contactList.size(); i++) {
+                        WxUser wxUser = WxUtil.parse(contactList.getJSONObject(i));
+                        if (wxUser instanceof WxGroup) {
+                            WxGroup group = (WxGroup) wxUser;
+                            WxGroup wxGroup = (WxGroup) contactService.queryUserByUserName(group.getUserName());
+                            wxGroup.setMemberCount(group.getMemberCount());
+                            wxGroup.setMemberList(group.getMemberList());
+                            wxGroup.setEncryChatRoomId(group.getEncryChatRoomId());
+                            updateGroupMember(wxGroup);
+                        } else {
+                            if (StringUtils.isNotBlank(wxUser.getEncryChatRoomId())) {
+                                contactService.updateGroupUserInfo(wxUser);
+                            }
+                        }
+                    }
+                } else {
+                    logger.warn("群组信息获取异常:{}", JSON.toJSONString(content));
+                }
+            }
+        });
+    }
+
+    private void updateGroupMember(WxGroup group) {
+        List<Map<String, String>> groupMemberParam = new ArrayList<>();
+        for (WxUser user : group.getMemberList()) {
+            Map<String, String> param = new HashMap<>();
+            WxUser wxUser = contactService.queryUserByUserName(user.getUserName());
+            if (null != wxUser) {
+                contactService.updateGroupUserInfo(group, wxUser);
+                continue;
+            }
+            param.put("EncryChatRoomId", group.getEncryChatRoomId());
+            param.put("UserName", user.getUserName());
+            groupMemberParam.add(param);
+            if (groupMemberParam.size() >= 10) {
+                batchGetContactTask(groupMemberParam);
+            }
+        }
+        batchGetContactTask(groupMemberParam);
     }
 
 
@@ -290,7 +363,7 @@ public abstract class BaseServer implements Runnable, WxApi {
      * 获取二维码 以及 UUID
      */
     public void queryNewUUID() {
-        this.queryNewUUID(null);
+        this.queryNewUUID(DEFAULT);
     }
 
     public void queryNewUUID(BiConsumer<Boolean, String> biConsumer) {

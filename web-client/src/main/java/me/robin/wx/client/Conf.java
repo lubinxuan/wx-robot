@@ -7,7 +7,7 @@ public interface Conf {
     interface API {
         String webwxsendappmsg = "/cgi-bin/mmwebwx-bin/webwxsendappmsg";
         String webwxsendmsg = "/cgi-bin/mmwebwx-bin/webwxsendmsg";
-        String webwxuploadmedia = "/cgi-bin/mmwebwx-bin/webwxuploadmedia?f=json";
+        String webwxuploadmedia = "https://file.{host}/cgi-bin/mmwebwx-bin/webwxuploadmedia";
         String webwxsendmsgimg = "/cgi-bin/mmwebwx-bin/webwxsendmsgimg";
     }
 }

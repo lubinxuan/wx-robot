@@ -74,21 +74,20 @@ public class Server extends BaseServer {
 
         Map<String, Object> requestBody = baseRequest();
         requestBody.put("UploadType", 2);
-        JSONObject msg = new JSONObject();
-        msg.put("ClientMediaId", System.currentTimeMillis());
-        msg.put("TotalLen", imgBytes.length);
-        msg.put("StartPos", 0);
-        msg.put("DataLen", imgBytes.length);
-        msg.put("MediaType", 4);
-        msg.put("FromUserName", this.user.getUserName());
-        msg.put("ToUserName", wxUser.getUserName());
-        msg.put("FileMd5", DigestUtils.md5Hex(imgBytes));
-        builder.addFormDataPart("uploadmediarequest", JSON.toJSONString(msg));
+        requestBody.put("ClientMediaId", System.currentTimeMillis());
+        requestBody.put("TotalLen", imgBytes.length);
+        requestBody.put("StartPos", 0);
+        requestBody.put("DataLen", imgBytes.length);
+        requestBody.put("MediaType", 4);
+        requestBody.put("FromUserName", this.user.getUserName());
+        requestBody.put("ToUserName", wxUser.getUserName());
+        requestBody.put("FileMd5", DigestUtils.md5Hex(imgBytes));
+        builder.addFormDataPart("uploadmediarequest", JSON.toJSONString(requestBody));
         builder.addFormDataPart("webwx_data_ticket", this.user.getWebwxDataTicket());
         builder.addFormDataPart("pass_ticket", this.user.getPassTicket());
         builder.addFormDataPart("filename", "file_" + id, fileBody);
 
-        Request.Builder requestBuilder = initRequestBuilder(Conf.API.webwxuploadmedia);
+        Request.Builder requestBuilder = initRequestBuilder(Conf.API.webwxuploadmedia, "f", "json");
         Request request = requestBuilder.post(builder.build()).build();
         this.client.newCall(request).enqueue(new BaseJsonCallback() {
             @Override
@@ -97,10 +96,11 @@ public class Server extends BaseServer {
                 if (null != ret && 0 == ret) {
                     logger.info("文件上传成功");
                     String mediaId = content.getString("MediaId");
-                    sendMsg(wxUser, null, mediaId, 3, Conf.API.webwxsendmsgimg, messageSendListener);
+                    Request.Builder builder1 = initRequestBuilder(Conf.API.webwxsendmsgimg, "fun", "async", "f", "json", "lang", "zh_CN", "pass_ticket", loginUser().getPassTicket());
+                    sendMsg(wxUser, null, mediaId, 3, builder1, messageSendListener);
                 } else {
-                    logger.info("消息发送失败:{}", content.toJSONString());
-                    messageSendListener.failure(user, fileName,TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
+                    logger.info("消息发送失败:{}", JSON.toJSONString(content));
+                    messageSendListener.failure(user, fileName, TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
                 }
             }
         });
@@ -121,11 +121,10 @@ public class Server extends BaseServer {
         WxUser wxUser = getWxUser(user, message, messageSendListener);
         if (wxUser == null) return;
 
-        sendMsg(wxUser, message, null, type, api, messageSendListener);
+        sendMsg(wxUser, message, null, type, initRequestBuilder(api), messageSendListener);
     }
 
-    private void sendMsg(WxUser wxUser, String message, String mediaId, int type, String api, MessageSendListener messageSendListener) {
-        Request.Builder builder = initRequestBuilder(api);
+    private void sendMsg(WxUser wxUser, String message, String mediaId, int type, Request.Builder builder, MessageSendListener messageSendListener) {
         Map<String, Object> requestBody = baseRequest();
         String localId = System.currentTimeMillis() + WxUtil.random(4);
         requestBody.put("Scene", 0);
@@ -155,7 +154,7 @@ public class Server extends BaseServer {
                     messageSendListener.success(wxUser.getUserName(), message, msgId, localId);
                 } else {
                     logger.info("消息发送失败:{}", syncRsp.toJSONString());
-                    messageSendListener.failure(wxUser.getUserName(), message,TypeUtils.castToString(JSONPath.eval(syncRsp, "BaseResponse.ErrMsg")));
+                    messageSendListener.failure(wxUser.getUserName(), message, TypeUtils.castToString(JSONPath.eval(syncRsp, "BaseResponse.ErrMsg")));
                 }
             }
         });

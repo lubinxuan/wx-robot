@@ -45,7 +45,7 @@ public class Robot {
             }
 
             @Override
-            public void failure(String user, String message) {
+            public void failure(String user, String message,String errorMessage) {
 
             }
         };

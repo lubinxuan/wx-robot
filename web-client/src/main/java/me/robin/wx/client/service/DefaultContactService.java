@@ -4,11 +4,15 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import me.robin.wx.client.model.WxGroup;
 import me.robin.wx.client.model.WxUser;
+import me.robin.wx.client.util.WxUtil;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -26,17 +30,8 @@ public class DefaultContactService implements ContactService {
     @Override
     public void updateContact(JSONArray array) {
         for (int i = 0; i < array.size(); i++) {
-            JSONObject account = array.getJSONObject(i);
-            String userName = account.getString("UserName");
-            if (StringUtils.startsWith(userName, "@@")) {
-                WxGroup wxGroup = account.toJavaObject(WxGroup.class);
-                addWxUser(wxGroup);
-            } else if (StringUtils.startsWith(userName, "@")) {
-                WxUser wxUser = account.toJavaObject(WxUser.class);
-                addWxUser(wxUser);
-            } else {
-                logger.info("不支持的用户类型: {} {} {} {}", userName, account.getString("Alias"), account.getString("NickName"), account.getString("Signature"));
-            }
+            WxUser user = WxUtil.parse(array.getJSONObject(i));
+            addWxUser(user);
         }
     }
 
@@ -88,6 +83,31 @@ public class DefaultContactService implements ContactService {
             wxUser = queryUserByUserName(queryString);
         }
         return wxUser;
+    }
+
+    @Override
+    public List<WxGroup> listAllGroup() {
+        List<WxGroup> groupList = new ArrayList<>();
+        this.userNameMap.values().stream().filter(u -> u instanceof WxGroup).forEach(u -> groupList.add((WxGroup) u));
+        return groupList;
+    }
+
+    @Override
+    public void updateGroupUserInfo(WxUser wxUser) {
+        Optional<WxUser> group = this.userNameMap.values().stream().filter(u -> StringUtils.equals(u.getEncryChatRoomId(), wxUser.getEncryChatRoomId())).findAny();
+        if (group.isPresent() && group.get() instanceof WxGroup) {
+            this.updateGroupUserInfo((WxGroup) group.get(), wxUser);
+        }
+    }
+
+    @Override
+    public void updateGroupUserInfo(WxGroup group, WxUser wxUser) {
+        for (int i = 0; i < group.getMemberList().size(); i++) {
+            WxUser tmp = group.getMemberList().get(i);
+            if (StringUtils.equals(tmp.getUserName(), wxUser.getUserName())) {
+                group.getMemberList().set(i, wxUser);
+            }
+        }
     }
 
     @Override
