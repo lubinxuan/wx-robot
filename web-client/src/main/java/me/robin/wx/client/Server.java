@@ -35,8 +35,8 @@ public class Server extends BaseServer {
 
     private final DateFormat dateFormat = new SimpleDateFormat("EEE d MMM yyyy HH:mm:ss 'GMT'", Locale.CHINA);
 
-    public Server(String appId, ContactService contactService) {
-        super(appId, contactService);
+    public Server(String instanceId, String appId, ContactService contactService) {
+        super(instanceId, appId, contactService);
         this.dateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
     }
 
@@ -94,12 +94,12 @@ public class Server extends BaseServer {
             void process(Call call, Response response, JSONObject content) {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
                 if (null != ret && 0 == ret) {
-                    logger.info("文件上传成功");
+                    logger.info("[{}][]文件上传成功", getInstanceId());
                     String mediaId = content.getString("MediaId");
                     Request.Builder builder1 = initRequestBuilder(Conf.API.webwxsendmsgimg, "fun", "async", "f", "json", "lang", "zh_CN", "pass_ticket", loginUser().getPassTicket());
                     sendMsg(wxUser, null, mediaId, 3, builder1, messageSendListener);
                 } else {
-                    logger.info("消息发送失败:{}", JSON.toJSONString(content));
+                    logger.info("[{}]消息发送失败:{}", getInstanceId(), JSON.toJSONString(content));
                     messageSendListener.failure(user, fileName, TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
                 }
             }
@@ -148,12 +148,12 @@ public class Server extends BaseServer {
             void process(Call call, Response response, JSONObject syncRsp) {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(syncRsp, "BaseResponse.Ret"));
                 if (null != ret && 0 == ret) {
-                    logger.info("消息发送成功");
+                    logger.info("[{}]消息发送成功", getInstanceId());
                     String msgId = syncRsp.getString("MsgID");
                     msg.put("MsgId", msgId);
                     messageSendListener.success(wxUser.getUserName(), message, msgId, localId);
                 } else {
-                    logger.info("消息发送失败:{}", syncRsp.toJSONString());
+                    logger.info("[{}]消息发送失败:{}", getInstanceId(), syncRsp.toJSONString());
                     messageSendListener.failure(wxUser.getUserName(), message, TypeUtils.castToString(JSONPath.eval(syncRsp, "BaseResponse.ErrMsg")));
                 }
             }
@@ -162,20 +162,20 @@ public class Server extends BaseServer {
 
     private WxUser getWxUser(String user, String message, MessageSendListener messageSendListener) {
         if (!checkLogin()) {
-            logger.info("还未完成登录,不能发送消息");
+            logger.info("[{}]还未完成登录,不能发送消息", getInstanceId());
             messageSendListener.serverNotReady(user, message);
             return null;
         }
 
         WxUser wxUser = contactService.queryUser(user);
         if (null == wxUser) {
-            logger.info("找不到目标用户,不能发送消息");
+            logger.info("[{}]找不到目标用户,不能发送消息", getInstanceId());
             messageSendListener.userNotFound(user, message);
             return null;
         }
 
         if (StringUtils.equals(wxUser.getUserName(), this.user.getUserName())) {
-            logger.warn("WEB微信不能给自己发消息");
+            logger.warn("[{}]WEB微信不能给自己发消息", getInstanceId());
             return null;
         }
         return wxUser;
@@ -189,7 +189,7 @@ public class Server extends BaseServer {
      */
     public void modChatRoomName(String chatRoom, String name) {
         if (!checkLogin()) {
-            logger.info("还未完成登录,不能发送消息");
+            logger.info("[{}]还未完成登录,不能发送消息", getInstanceId());
         } else {
             WxUser wxUser = contactService.queryUser(chatRoom);
             if (wxUser instanceof WxGroup) {
@@ -204,14 +204,14 @@ public class Server extends BaseServer {
                     void process(Call call, Response response, JSONObject content) {
                         Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
                         if (null != ret && 0 == ret) {
-                            logger.info("群聊名称修改修改成功");
+                            logger.info("[{}]群聊名称修改修改成功", getInstanceId());
                         } else {
-                            logger.info("群聊名称修改失败:{}", content.toJSONString());
+                            logger.info("[{}]群聊名称修改失败:{}", getInstanceId(), content.toJSONString());
                         }
                     }
                 });
             } else {
-                logger.warn("要求修改的不是群");
+                logger.warn("[{}]要求修改的不是群", getInstanceId());
             }
         }
     }

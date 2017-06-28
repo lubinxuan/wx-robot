@@ -10,6 +10,18 @@ public abstract class ExpireListener {
      */
     private long expire;
 
+    public ExpireListener(long expire) {
+        this.expire = expire;
+    }
+
+    public ExpireListener() {
+        this.expire = -1;
+    }
+
+    boolean expire() {
+        return this.expire > 0 && (System.currentTimeMillis() - lastLoginRequest) > this.expire;
+    }
+
     public abstract boolean expire(BaseServer server);
 
     public long getExpire() {
