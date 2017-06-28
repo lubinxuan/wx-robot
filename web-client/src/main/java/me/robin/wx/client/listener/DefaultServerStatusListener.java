@@ -7,6 +7,7 @@ import me.robin.wx.client.WxApi;
 import me.robin.wx.client.model.WxMsg;
 import me.robin.wx.client.model.WxUser;
 import me.robin.wx.client.service.ContactService;
+import me.robin.wx.client.service.DefaultContactService;
 import me.robin.wx.client.util.WxUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Created by xuanlubin on 2017/4/20.
  */
-public class DefaultServerStatusListener implements ServerStatusListener {
+public class DefaultServerStatusListener extends EmptyServerStatusListener implements ServerStatusListener {
 
     private static final Logger logger = LoggerFactory.getLogger(DefaultServerStatusListener.class);
 
@@ -29,14 +30,14 @@ public class DefaultServerStatusListener implements ServerStatusListener {
         this.contactService = contactService;
     }
 
+    public DefaultServerStatusListener() {
+        this.contactService = new DefaultContactService();
+    }
+
+
     @Override
     public void registerMessageHandler(int msgType, MsgHandler msgHandler) {
         handlerMap.computeIfAbsent(msgType, s -> new MsgChainHandler()).addHandler(msgHandler);
-    }
-
-    @Override
-    public void onUUIDSuccess(String url) {
-        logger.debug("登录二维码:{}", url);
     }
 
     @Override
@@ -66,20 +67,5 @@ public class DefaultServerStatusListener implements ServerStatusListener {
     private String getNickName(String userName) {
         WxUser user = contactService.queryUserByUserName(userName);
         return null == user ? userName : user.getNickName();
-    }
-
-    @Override
-    public void onModContactList(JSONArray modContactList, WxApi api) {
-
-    }
-
-    @Override
-    public void onDelContactList(JSONArray delContactList, WxApi api) {
-
-    }
-
-    @Override
-    public void onModChatRoomMemberList(JSONArray modChatRoomMemberList, WxApi api) {
-
     }
 }

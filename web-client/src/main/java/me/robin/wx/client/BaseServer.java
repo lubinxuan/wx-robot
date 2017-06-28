@@ -7,11 +7,13 @@ import com.alibaba.fastjson.JSONPath;
 import com.alibaba.fastjson.util.TypeUtils;
 import me.robin.wx.client.cookie.CookieInterceptor;
 import me.robin.wx.client.cookie.MemoryCookieStore;
+import me.robin.wx.client.listener.EmptyServerStatusListener;
 import me.robin.wx.client.listener.ServerStatusListener;
 import me.robin.wx.client.model.LoginUser;
 import me.robin.wx.client.model.WxGroup;
 import me.robin.wx.client.model.WxUser;
 import me.robin.wx.client.service.ContactService;
+import me.robin.wx.client.service.DefaultContactService;
 import me.robin.wx.client.util.ResponseReadUtils;
 import me.robin.wx.client.util.WxUtil;
 import okhttp3.*;
@@ -36,15 +38,27 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private static final Timer delayTaskScheduler = new Timer("DelayTaskScheduler");
 
+    private static final ExpireListener DEFAULT_EXPIRE_LISTENER = new ExpireListener() {
+        @Override
+        boolean expire(BaseServer server) {
+            return false;
+        }
+    };
+
+    private static final ServerStatusListener DEFAULT_SERVER_STATUS_LISTENER = new EmptyServerStatusListener();
+
+
     private String appId;
 
     final LoginUser user = new LoginUser();
 
     OkHttpClient client;
 
-    protected ServerStatusListener statusListener;
+    protected ServerStatusListener statusListener = DEFAULT_SERVER_STATUS_LISTENER;
 
-    protected ContactService contactService;
+    private ExpireListener expireListener = DEFAULT_EXPIRE_LISTENER;
+
+    protected ContactService contactService = new DefaultContactService();
 
     protected CookieStore cookieStore;
 
@@ -244,10 +258,12 @@ public abstract class BaseServer implements Runnable, WxApi {
                         break;
                     case 1101:
                         login = false;
+                        logger.info("客户端退出了");
                         WxUtil.deleteImgTmpDir(BaseServer.this.user.getUin());
                         BaseServer.this.contactService.clearContact();
-                        queryNewUUID();
-                        logger.info("客户端退出了");
+                        if (!expireListener.expire(BaseServer.this)) {
+                            queryNewUUID();
+                        }
                         return;
                     default:
                         logger.warn("没有正常获取到同步信息 : {}", content);
@@ -392,9 +408,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                     String qrCodeUrl = getQrCodeUrl();
                     statusListener.onUUIDSuccess(qrCodeUrl);
                     BaseServer.this.waitForLogin();
-                    if (null != biConsumer) {
-                        biConsumer.accept(false, qrCodeUrl);
-                    }
+                    biConsumer.accept(false, qrCodeUrl);
                 } else {
                     logger.warn("没有正常获取到UUID");
                     delayTask(() -> reCall(call, this), 2);
@@ -439,10 +453,13 @@ public abstract class BaseServer implements Runnable, WxApi {
                     case "400":
                         logger.info("二维码失效");
                         BaseServer.this.user.setUuid(null);
-                        BaseServer.this.queryNewUUID();
+                        if (!expireListener.expire(BaseServer.this)) {
+                            BaseServer.this.queryNewUUID();
+                        }
                         break;
                     default:
                         logger.info("扫码登录发生未知异常 服务器响应:{}", content);
+                        expireListener.expire(BaseServer.this);
                 }
             }
         });
@@ -575,7 +592,11 @@ public abstract class BaseServer implements Runnable, WxApi {
     }
 
     public void setStatusListener(ServerStatusListener statusListener) {
-        this.statusListener = statusListener;
+        this.statusListener = null == statusListener ? DEFAULT_SERVER_STATUS_LISTENER : statusListener;
+    }
+
+    public void setExpireListener(ExpireListener expireListener) {
+        this.expireListener = null == expireListener ? DEFAULT_EXPIRE_LISTENER : expireListener;
     }
 
     public abstract class BaseCallback implements Callback {
