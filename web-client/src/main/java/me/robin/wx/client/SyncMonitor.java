@@ -16,8 +16,12 @@ public class SyncMonitor {
 
     private static final Map<String, Long> SYNC_TIME_MAP = new ConcurrentHashMap<>();
 
-    public static void updateSyncTime(BaseServer baseServer) {
+    static void updateSyncTime(BaseServer baseServer) {
         SYNC_TIME_MAP.put(baseServer.getInstanceId(), System.currentTimeMillis());
+    }
+
+    static void evict(BaseServer baseServer) {
+        SYNC_TIME_MAP.remove(baseServer.getInstanceId());
     }
 
     static {

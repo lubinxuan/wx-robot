@@ -262,6 +262,8 @@ public abstract class BaseServer implements Runnable, WxApi {
                         BaseServer.this.contactService.clearContact();
                         if (!expireListener.expire(BaseServer.this)) {
                             queryNewUUID();
+                        } else {
+                            SyncMonitor.evict(BaseServer.this);
                         }
                         return;
                     default:
@@ -454,13 +456,16 @@ public abstract class BaseServer implements Runnable, WxApi {
                         logger.info("[{}]二维码失效", instanceId);
                         BaseServer.this.user.setUuid(null);
                         if (expireListener.expire() && expireListener.expire(BaseServer.this)) {
+                            SyncMonitor.evict(BaseServer.this);
                             return;
                         }
                         BaseServer.this.queryNewUUID();
                         break;
                     default:
                         logger.info("[{}]扫码登录发生未知异常 服务器响应:{}", instanceId, content);
-                        expireListener.expire(BaseServer.this);
+                        if (expireListener.expire(BaseServer.this)) {
+                            SyncMonitor.evict(BaseServer.this);
+                        }
                 }
             }
         });
