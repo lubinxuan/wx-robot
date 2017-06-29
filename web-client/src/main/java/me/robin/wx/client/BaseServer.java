@@ -47,6 +47,7 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private static final ServerStatusListener DEFAULT_SERVER_STATUS_LISTENER = new EmptyServerStatusListener();
 
+    private String qrBaseUrl = "https://login.weixin.qq.com/qrcode/";
 
     private String appId;
 
@@ -129,7 +130,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                     getContact();
                 } else {
                     String message = TypeUtils.castToString(JSONPath.eval(responseJson, "BaseResponse.ErrMsg"));
-                    logger.warn("[{}]web微信初始化失败 ret:{} errMsg:{}",instanceId, ret, message);
+                    logger.warn("[{}]web微信初始化失败 ret:{} errMsg:{}", instanceId, ret, message);
                 }
             }
         });
@@ -144,7 +145,7 @@ public abstract class BaseServer implements Runnable, WxApi {
         client.newCall(request).enqueue(new BaseJsonCallback() {
             @Override
             void process(Call call, Response response, JSONObject content) {
-                logger.info("[{}]获取到联系人列表",instanceId);
+                logger.info("[{}]获取到联系人列表", instanceId);
                 syncCheck();
                 contactService.updateContact(content.getJSONArray("MemberList"));
                 login = true;
@@ -189,7 +190,7 @@ public abstract class BaseServer implements Runnable, WxApi {
             void process(Call call, Response response, JSONObject content) {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
                 if (null != ret && ret == 0) {
-                    logger.info("[{}]同步到群组信息",instanceId);
+                    logger.info("[{}]同步到群组信息", instanceId);
                     JSONArray contactList = content.getJSONArray("ContactList");
                     for (int i = 0; i < contactList.size(); i++) {
                         WxUser wxUser = WxUtil.parse(contactList.getJSONObject(i));
@@ -207,7 +208,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                         }
                     }
                 } else {
-                    logger.warn("[{}]群组信息获取异常:{}", instanceId,JSON.toJSONString(content));
+                    logger.warn("[{}]群组信息获取异常:{}", instanceId, JSON.toJSONString(content));
                 }
             }
         });
@@ -217,11 +218,6 @@ public abstract class BaseServer implements Runnable, WxApi {
         List<Map<String, String>> groupMemberParam = new ArrayList<>();
         for (WxUser user : group.getMemberList()) {
             Map<String, String> param = new HashMap<>();
-            WxUser wxUser = contactService.queryUserByUserName(user.getUserName());
-            if (null != wxUser) {
-                contactService.updateGroupUserInfo(group, wxUser);
-                continue;
-            }
             param.put("EncryChatRoomId", group.getEncryChatRoomId());
             param.put("UserName", user.getUserName());
             groupMemberParam.add(param);
@@ -249,19 +245,19 @@ public abstract class BaseServer implements Runnable, WxApi {
                 int retcode = syncStatus.getIntValue("retcode");
                 switch (retcode) {
                     case 0:
+                        SyncMonitor.updateSyncTime(BaseServer.this);
                         switch (selector) {
                             case 0:
-                                logger.info("[{}]没有信息需要同步",instanceId);
                                 break;
                             default:
-                                logger.info("[{}]有信息需要同步 selector:{}",instanceId, selector);
+                                logger.info("[{}]有信息需要同步 selector:{}", instanceId, selector);
                                 sync();
                                 return;
                         }
                         break;
                     case 1101:
                         login = false;
-                        logger.info("[{}]客户端退出了",instanceId);
+                        logger.info("[{}]客户端退出了", instanceId);
                         WxUtil.deleteImgTmpDir(BaseServer.this.user.getUin());
                         BaseServer.this.contactService.clearContact();
                         if (!expireListener.expire(BaseServer.this)) {
@@ -269,7 +265,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                         }
                         return;
                     default:
-                        logger.warn("[{}]没有正常获取到同步信息 : {}",instanceId, content);
+                        logger.warn("[{}]没有正常获取到同步信息 : {}", instanceId, content);
                 }
                 syncCheck();
             }
@@ -292,17 +288,17 @@ public abstract class BaseServer implements Runnable, WxApi {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(syncRsp, "BaseResponse.Ret"));
                 boolean syncNow = true;
                 if (null != ret && 0 == ret) {
-                    logger.debug("[{}]同步成功",instanceId);
+                    logger.debug("[{}]同步成功", instanceId);
                     JSONObject syncKey = syncRsp.getJSONObject("SyncCheckKey");
                     if (StringUtils.equals(syncKey.toJSONString(), user.getSyncKey().toJSONString())) {
-                        logger.warn("[{}]同步key没有更新",instanceId);
+                        logger.warn("[{}]同步key没有更新", instanceId);
                         syncNow = false;
                     } else {
                         user.setSyncKey(syncKey);
                     }
                     String skey = syncRsp.getString("SKey");
                     if (StringUtils.isNotBlank(skey)) {
-                        logger.info("[{}]更新用户SKey",instanceId);
+                        logger.info("[{}]更新用户SKey", instanceId);
                         user.setSkey(skey);
                     }
                     if (null != statusListener) {
@@ -312,7 +308,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                         statusListener.onModContactList(syncRsp.getJSONArray("ModChatRoomMemberList"), (Server) BaseServer.this);
                     }
                 } else {
-                    logger.warn("[{}]同步异常:{}",instanceId, syncRsp.toJSONString());
+                    logger.warn("[{}]同步异常:{}", instanceId, syncRsp.toJSONString());
                 }
 
                 if (syncNow) {
@@ -344,15 +340,15 @@ public abstract class BaseServer implements Runnable, WxApi {
                     Optional<Cookie> wxSidCookie = cookies.stream().filter(cookie -> "wxsid".equals(cookie.name())).findFirst();
                     if (wxSidCookie.isPresent()) {
                         user.setSid(wxSidCookie.get().value());
-                        logger.info("[{}]登录成功",instanceId);
+                        logger.info("[{}]登录成功", instanceId);
                         BaseServer.this.init();
                         return;
                     } else {
-                        logger.warn("[{}]微信登录异常,没有读取到wxsid",instanceId);
+                        logger.warn("[{}]微信登录异常,没有读取到wxsid", instanceId);
                     }
                 } else {
                     String message = WxUtil.getValueFromXml(content, "handler");
-                    logger.error("[{}]WEB微信登录异常 ret:{} handler:{}",instanceId, ret, message);
+                    logger.error("[{}]WEB微信登录异常 ret:{} handler:{}", instanceId, ret, message);
                 }
                 reCall(call, this);
             }
@@ -373,7 +369,7 @@ public abstract class BaseServer implements Runnable, WxApi {
         client.newCall(builder.build()).enqueue(new BaseCallback() {
             @Override
             public void process(Call call, Response response, String content) {
-                logger.info("[{}]WX登录StatusNotify send success",instanceId);
+                logger.info("[{}]WX登录StatusNotify send success", instanceId);
             }
         });
     }
@@ -414,7 +410,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                     BaseServer.this.waitForLogin();
                     biConsumer.accept(false, qrCodeUrl);
                 } else {
-                    logger.warn("[{}]没有正常获取到UUID",instanceId);
+                    logger.warn("[{}]没有正常获取到UUID", instanceId);
                     delayTask(() -> reCall(call, this), 2);
                 }
             }
@@ -425,7 +421,7 @@ public abstract class BaseServer implements Runnable, WxApi {
         if (StringUtils.isBlank(BaseServer.this.user.getUuid())) {
             return null;
         }
-        return "https://login.weixin.qq.com/qrcode/" + BaseServer.this.user.getUuid();
+        return this.qrBaseUrl + BaseServer.this.user.getUuid();
     }
 
 
@@ -446,16 +442,16 @@ public abstract class BaseServer implements Runnable, WxApi {
                         BaseServer.this.login(url);
                         break;
                     case "201":
-                        logger.info("[{}]请点击手机客户端确认登录",instanceId);
+                        logger.info("[{}]请点击手机客户端确认登录", instanceId);
                         BaseServer.this.user.setUserAvatar(StringUtils.substringBetween(content, "window.userAvatar = '", "';"));
                         delayTask(BaseServer.this::waitForLogin, 2);
                         break;
                     case "408":
-                        logger.info("[{}]请用手机客户端扫码登录web微信",instanceId);
+                        logger.info("[{}]请用手机客户端扫码登录web微信", instanceId);
                         waitForLogin();
                         break;
                     case "400":
-                        logger.info("[{}]二维码失效",instanceId);
+                        logger.info("[{}]二维码失效", instanceId);
                         BaseServer.this.user.setUuid(null);
                         if (expireListener.expire() && expireListener.expire(BaseServer.this)) {
                             return;
@@ -463,7 +459,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                         BaseServer.this.queryNewUUID();
                         break;
                     default:
-                        logger.info("[{}]扫码登录发生未知异常 服务器响应:{}", instanceId,content);
+                        logger.info("[{}]扫码登录发生未知异常 服务器响应:{}", instanceId, content);
                         expireListener.expire(BaseServer.this);
                 }
             }
@@ -602,6 +598,10 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     public void setExpireListener(ExpireListener expireListener) {
         this.expireListener = null == expireListener ? DEFAULT_EXPIRE_LISTENER : expireListener;
+    }
+
+    public void setQrBaseUrl(String qrBaseUrl) {
+        this.qrBaseUrl = null == qrBaseUrl ? "" : qrBaseUrl;
     }
 
     public String getInstanceId() {
