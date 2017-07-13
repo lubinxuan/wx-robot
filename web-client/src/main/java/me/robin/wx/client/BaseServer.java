@@ -25,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.CookieStore;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
@@ -72,6 +73,8 @@ public abstract class BaseServer implements Runnable, WxApi {
     private volatile boolean login = false;
 
     protected LinkedBlockingQueue<String[]> lazyUpdateContactQueue = new LinkedBlockingQueue<>();
+
+    private final CountDownLatch NO_WAIT = new CountDownLatch(0);
 
     private static final BiConsumer<Boolean, String> DEFAULT = (aBoolean, s) -> {
 
@@ -138,7 +141,11 @@ public abstract class BaseServer implements Runnable, WxApi {
                     BaseServer.this.timer.schedule(new TimerTask() {
                         @Override
                         public void run() {
-                            batchGetContact();
+                            try {
+                                batchGetContact();
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
                         }
                     }, 2000, 2000);
                 } else {
@@ -174,7 +181,7 @@ public abstract class BaseServer implements Runnable, WxApi {
     /**
      * 获取通讯录
      */
-    private void batchGetContact() {
+    private void batchGetContact() throws InterruptedException {
         List<Map<String, String>> updateContactList = new ArrayList<>();
         while (true) {
             List<String[]> groupNameList = new ArrayList<>();
@@ -188,14 +195,16 @@ public abstract class BaseServer implements Runnable, WxApi {
                 param.put("UserName", contactInfo[0]);
                 updateContactList.add(param);
             }
-            batchGetContactTask(updateContactList);
+            CountDownLatch latch = batchGetContactTask(updateContactList);
+            latch.await();
         }
     }
 
-    private void batchGetContactTask(List<Map<String, String>> updateContactList) {
+    private CountDownLatch batchGetContactTask(List<Map<String, String>> updateContactList) {
         if (updateContactList.isEmpty()) {
-            return;
+            return NO_WAIT;
         }
+        CountDownLatch latch = new CountDownLatch(1);
         Map<String, Object> baseParam = baseRequest();
         baseParam.put("Count", updateContactList.size());
         baseParam.put("List", updateContactList);
@@ -209,6 +218,7 @@ public abstract class BaseServer implements Runnable, WxApi {
         client.newCall(builder.build()).enqueue(new BaseJsonCallback() {
             @Override
             void process(Call call, Response response, JSONObject content) {
+                latch.countDown();
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
                 if (null != ret && ret == 0) {
                     logger.info("[{}]同步到群组信息", instanceId);
@@ -241,6 +251,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                 }
             }
         });
+        return latch;
     }
 
 
