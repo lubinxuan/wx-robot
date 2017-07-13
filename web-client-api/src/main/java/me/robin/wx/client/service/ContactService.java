@@ -22,6 +22,8 @@ public interface ContactService {
 
     WxUser queryUser(String queryString);
 
+    void addWxUser(WxUser wxUser);
+
     void clearContact();
 
     List<WxGroup> listAllGroup();
@@ -29,5 +31,7 @@ public interface ContactService {
     void updateGroupUserInfo(WxUser wxUser);
 
     void updateGroupUserInfo(WxGroup group,WxUser wxUser);
+
+    boolean groupInitialized(String groupName);
 
 }

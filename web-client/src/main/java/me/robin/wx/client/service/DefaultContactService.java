@@ -9,11 +9,9 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 /**
  * Created by xuanlubin on 2017/4/19.
@@ -26,6 +24,8 @@ public class DefaultContactService implements ContactService {
     protected Map<String, WxUser> remarkMap = new ConcurrentHashMap<>();
     protected Map<String, WxUser> nickNameMap = new ConcurrentHashMap<>();
     protected Map<String, WxUser> userNameMap = new ConcurrentHashMap<>();
+    protected Set<String> groupUserNames = new HashSet<>();
+
 
     @Override
     public void updateContact(JSONArray array) {
@@ -35,13 +35,18 @@ public class DefaultContactService implements ContactService {
         }
     }
 
-    private void addWxUser(WxUser wxUser) {
+    public void addWxUser(WxUser wxUser) {
         if (StringUtils.isNotBlank(wxUser.getAlias())) {
             aliasMap.put(wxUser.getAlias(), wxUser);
         }
         if (StringUtils.isNotBlank(wxUser.getRemarkName())) {
             remarkMap.put(wxUser.getRemarkName(), wxUser);
         }
+
+        if (StringUtils.startsWith(wxUser.getUserName(), "@@")) {
+            groupUserNames.add(wxUser.getUserName());
+        }
+
         nickNameMap.put(wxUser.getNickName(), wxUser);
         userNameMap.put(wxUser.getUserName(), wxUser);
     }
@@ -111,10 +116,16 @@ public class DefaultContactService implements ContactService {
     }
 
     @Override
+    public boolean groupInitialized(String groupName) {
+        return !groupUserNames.add(groupName);
+    }
+
+    @Override
     public void clearContact() {
         this.aliasMap.clear();
         this.remarkMap.clear();
         this.nickNameMap.clear();
         this.userNameMap.clear();
+        this.groupUserNames.clear();
     }
 }

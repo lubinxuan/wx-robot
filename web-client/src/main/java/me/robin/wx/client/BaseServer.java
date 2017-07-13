@@ -25,12 +25,14 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.CookieStore;
 import java.util.*;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
  * Created by xuanlubin on 2017/4/18.
+ * 微信WEB客户端
  */
 public abstract class BaseServer implements Runnable, WxApi {
 
@@ -46,6 +48,8 @@ public abstract class BaseServer implements Runnable, WxApi {
     };
 
     private static final ServerStatusListener DEFAULT_SERVER_STATUS_LISTENER = new EmptyServerStatusListener();
+
+    private Timer timer;
 
     private String qrBaseUrl = "https://login.weixin.qq.com/qrcode/";
 
@@ -67,6 +71,8 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private volatile boolean login = false;
 
+    protected LinkedBlockingQueue<String[]> lazyUpdateContactQueue = new LinkedBlockingQueue<>();
+
     private static final BiConsumer<Boolean, String> DEFAULT = (aBoolean, s) -> {
 
     };
@@ -81,6 +87,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                 .connectTimeout(60, TimeUnit.SECONDS)
                 .addInterceptor(new CookieInterceptor(this.cookieStore))
                 .build();
+        this.timer = new Timer("GroupContactSyncThread-" + instanceId);
     }
 
     @Override
@@ -128,6 +135,12 @@ public abstract class BaseServer implements Runnable, WxApi {
                     statusNotify();
                     contactService.updateContact(responseJson.getJSONArray("ContactList"));
                     getContact();
+                    BaseServer.this.timer.schedule(new TimerTask() {
+                        @Override
+                        public void run() {
+                            batchGetContact();
+                        }
+                    }, 2000, 2000);
                 } else {
                     String message = TypeUtils.castToString(JSONPath.eval(responseJson, "BaseResponse.ErrMsg"));
                     logger.warn("[{}]web微信初始化失败 ret:{} errMsg:{}", instanceId, ret, message);
@@ -152,7 +165,8 @@ public abstract class BaseServer implements Runnable, WxApi {
                 synchronized (BaseServer.this.user) {
                     BaseServer.this.user.notifyAll();
                 }
-                batchGetContact();
+                List<WxGroup> wxGroupList = contactService.listAllGroup();
+                wxGroupList.forEach(g -> lazyUpdateContactQueue.offer(new String[]{g.getUserName()}));
             }
         });
     }
@@ -161,18 +175,21 @@ public abstract class BaseServer implements Runnable, WxApi {
      * 获取通讯录
      */
     private void batchGetContact() {
-        List<WxGroup> groupList = contactService.listAllGroup();
-        List<Map<String, String>> groupParam = new ArrayList<>();
-        for (WxGroup wxGroup : groupList) {
-            Map<String, String> param = new HashMap<>();
-            param.put("EncryChatRoomId", "");
-            param.put("UserName", wxGroup.getUserName());
-            groupParam.add(param);
-            if (groupParam.size() >= 5) {
-                batchGetContactTask(groupParam);
+        List<Map<String, String>> updateContactList = new ArrayList<>();
+        while (true) {
+            List<String[]> groupNameList = new ArrayList<>();
+            int rows = lazyUpdateContactQueue.drainTo(groupNameList, 10);
+            if (rows < 1) {
+                break;
             }
+            for (String[] contactInfo : groupNameList) {
+                Map<String, String> param = new HashMap<>();
+                param.put("EncryChatRoomId", contactInfo.length > 1 ? contactInfo[1] : "");
+                param.put("UserName", contactInfo[0]);
+                updateContactList.add(param);
+            }
+            batchGetContactTask(updateContactList);
         }
-        batchGetContactTask(groupParam);
     }
 
     private void batchGetContactTask(List<Map<String, String>> updateContactList) {
@@ -182,9 +199,13 @@ public abstract class BaseServer implements Runnable, WxApi {
         Map<String, Object> baseParam = baseRequest();
         baseParam.put("Count", updateContactList.size());
         baseParam.put("List", updateContactList);
+        logger.info("开始同步通讯录详情:{}", JSON.toJSONString(updateContactList));
         Request.Builder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxbatchgetcontact", "type", "ex", "r", System.currentTimeMillis(), "lang", "zh_CN");
         WxUtil.jsonRequest(baseParam, builder::post);
-        updateContactList.clear();
+        try {
+            updateContactList.clear();
+        } catch (UnsupportedOperationException ignore) {
+        }
         client.newCall(builder.build()).enqueue(new BaseJsonCallback() {
             @Override
             void process(Call call, Response response, JSONObject content) {
@@ -197,10 +218,18 @@ public abstract class BaseServer implements Runnable, WxApi {
                         if (wxUser instanceof WxGroup) {
                             WxGroup group = (WxGroup) wxUser;
                             WxGroup wxGroup = (WxGroup) contactService.queryUserByUserName(group.getUserName());
-                            wxGroup.setMemberCount(group.getMemberCount());
-                            wxGroup.setMemberList(group.getMemberList());
-                            wxGroup.setEncryChatRoomId(group.getEncryChatRoomId());
-                            updateGroupMember(wxGroup);
+                            if (wxGroup == null) {
+                                contactService.addWxUser(group);
+                                wxGroup = group;
+                            } else {
+                                wxGroup.setMemberCount(group.getMemberCount());
+                                wxGroup.setMemberList(group.getMemberList());
+                                wxGroup.setEncryChatRoomId(group.getEncryChatRoomId());
+                            }
+                            //群组成员信息加入等待更新列表
+                            for (WxUser user : wxGroup.getMemberList()) {
+                                lazyUpdateContactQueue.offer(new String[]{user.getUserName(), group.getEncryChatRoomId()});
+                            }
                         } else {
                             if (StringUtils.isNotBlank(wxUser.getEncryChatRoomId())) {
                                 contactService.updateGroupUserInfo(wxUser);
@@ -212,20 +241,6 @@ public abstract class BaseServer implements Runnable, WxApi {
                 }
             }
         });
-    }
-
-    private void updateGroupMember(WxGroup group) {
-        List<Map<String, String>> groupMemberParam = new ArrayList<>();
-        for (WxUser user : group.getMemberList()) {
-            Map<String, String> param = new HashMap<>();
-            param.put("EncryChatRoomId", group.getEncryChatRoomId());
-            param.put("UserName", user.getUserName());
-            groupMemberParam.add(param);
-            if (groupMemberParam.size() >= 10) {
-                batchGetContactTask(groupMemberParam);
-            }
-        }
-        batchGetContactTask(groupMemberParam);
     }
 
 
@@ -304,10 +319,12 @@ public abstract class BaseServer implements Runnable, WxApi {
                         user.setSkey(skey);
                     }
                     if (null != statusListener) {
-                        statusListener.onAddMsgList(syncRsp.getJSONArray("AddMsgList"), (Server) BaseServer.this);
-                        statusListener.onDelContactList(syncRsp.getJSONArray("ModContactList"), (Server) BaseServer.this);
-                        statusListener.onModChatRoomMemberList(syncRsp.getJSONArray("DelContactList"), (Server) BaseServer.this);
-                        statusListener.onModContactList(syncRsp.getJSONArray("ModChatRoomMemberList"), (Server) BaseServer.this);
+                        JSONArray addMsgList = syncRsp.getJSONArray("AddMsgList");
+                        checkGroupNotInContactList(addMsgList);
+                        statusListener.onAddMsgList(addMsgList, BaseServer.this);
+                        statusListener.onDelContactList(syncRsp.getJSONArray("ModContactList"), BaseServer.this);
+                        statusListener.onModChatRoomMemberList(syncRsp.getJSONArray("DelContactList"), BaseServer.this);
+                        statusListener.onModContactList(syncRsp.getJSONArray("ModChatRoomMemberList"), BaseServer.this);
                     }
                 } else {
                     logger.warn("[{}]同步异常:{}", instanceId, syncRsp.toJSONString());
@@ -321,6 +338,20 @@ public abstract class BaseServer implements Runnable, WxApi {
             }
         });
     }
+
+    private void checkGroupNotInContactList(JSONArray msgList) {
+        for (int i = 0; i < msgList.size(); i++) {
+            JSONObject message = msgList.getJSONObject(i);
+            String statusNotifyUserName = message.getString("StatusNotifyUserName");
+            String[] userNames = StringUtils.split(statusNotifyUserName, ",");
+            for (String userName : userNames) {
+                if (StringUtils.startsWith(statusNotifyUserName, "@@") && !contactService.groupInitialized(statusNotifyUserName)) {
+                    lazyUpdateContactQueue.offer(new String[]{userName});
+                }
+            }
+        }
+    }
+
 
     /**
      * 登录web微信
