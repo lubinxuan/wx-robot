@@ -72,7 +72,10 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private volatile boolean login = false;
 
-    protected LinkedBlockingQueue<String[]> lazyUpdateContactQueue = new LinkedBlockingQueue<>();
+    protected LinkedBlockingQueue<String[]> lazyUpdateGroupQueue = new LinkedBlockingQueue<>();
+    protected LinkedBlockingQueue<String[]> lazyUpdateGroupMemberQueue = new LinkedBlockingQueue<>();
+
+    private boolean groupMemberDetail = true;
 
     private final CountDownLatch NO_WAIT = new CountDownLatch(0);
 
@@ -173,7 +176,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                     BaseServer.this.user.notifyAll();
                 }
                 List<WxGroup> wxGroupList = contactService.listAllGroup();
-                wxGroupList.forEach(g -> lazyUpdateContactQueue.offer(new String[]{g.getUserName()}));
+                wxGroupList.forEach(g -> lazyUpdateGroupQueue.offer(new String[]{g.getUserName()}));
             }
         });
     }
@@ -185,9 +188,12 @@ public abstract class BaseServer implements Runnable, WxApi {
         List<Map<String, String>> updateContactList = new ArrayList<>();
         while (true) {
             List<String[]> groupNameList = new ArrayList<>();
-            int rows = lazyUpdateContactQueue.drainTo(groupNameList, 10);
+            int rows = lazyUpdateGroupQueue.drainTo(groupNameList, 10);
             if (rows < 1) {
-                break;
+                rows = lazyUpdateGroupMemberQueue.drainTo(groupNameList, 20);
+            }
+            if (rows < 1) {
+                return;
             }
             for (String[] contactInfo : groupNameList) {
                 Map<String, String> param = new HashMap<>();
@@ -236,9 +242,11 @@ public abstract class BaseServer implements Runnable, WxApi {
                                 wxGroup.setMemberList(group.getMemberList());
                                 wxGroup.setEncryChatRoomId(group.getEncryChatRoomId());
                             }
-                            //群组成员信息加入等待更新列表
-                            for (WxUser user : wxGroup.getMemberList()) {
-                                lazyUpdateContactQueue.offer(new String[]{user.getUserName(), group.getEncryChatRoomId()});
+                            if (groupMemberDetail) {
+                                //群组成员信息加入等待更新列表
+                                for (WxUser user : wxGroup.getMemberList()) {
+                                    lazyUpdateGroupMemberQueue.offer(new String[]{user.getUserName(), group.getEncryChatRoomId()});
+                                }
                             }
                         } else {
                             if (StringUtils.isNotBlank(wxUser.getEncryChatRoomId())) {
@@ -357,7 +365,7 @@ public abstract class BaseServer implements Runnable, WxApi {
             String[] userNames = StringUtils.split(statusNotifyUserName, ",");
             for (String userName : userNames) {
                 if (StringUtils.startsWith(statusNotifyUserName, "@@") && !contactService.groupInitialized(statusNotifyUserName)) {
-                    lazyUpdateContactQueue.offer(new String[]{userName});
+                    lazyUpdateGroupQueue.offer(new String[]{userName});
                 }
             }
         }
@@ -641,6 +649,10 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     public void setStatusListener(ServerStatusListener statusListener) {
         this.statusListener = null == statusListener ? DEFAULT_SERVER_STATUS_LISTENER : statusListener;
+    }
+
+    public void setGroupMemberDetail(boolean groupMemberDetail) {
+        this.groupMemberDetail = groupMemberDetail;
     }
 
     public void setExpireListener(ExpireListener expireListener) {
