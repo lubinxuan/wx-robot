@@ -522,33 +522,41 @@ public abstract class BaseServer implements Runnable, WxApi {
     }
 
     public void downloadImg(WxGroup group, WxUser wxUser, Consumer<byte[]> consumer) {
-        if (StringUtils.isBlank(wxUser.getHeadImgUrl())) {
-            consumer.accept(null);
+        String tmpPath = this.user.getUin() + "/" + (null == group ? "" : (group.getUserName() + "-")) + wxUser.getUserName() + ".jpg";
+        byte[] data = WxUtil.getHeaderImg(tmpPath);
+        if (null != data) {
+            consumer.accept(data);
         } else {
-            String tmpPath = this.user.getUin() + "/" + (null == group ? "" : (group.getUserName() + "-")) + wxUser.getUserName() + ".jpg";
-            byte[] data = WxUtil.getHeaderImg(tmpPath);
-            if (null != data) {
-                consumer.accept(data);
+            Request request;
+            if (StringUtils.isNotBlank(wxUser.getHeadImgUrl())) {
+                request = initRequestBuilder("https://" + this.user.getLoginHost() + wxUser.getHeadImgUrl()).build();
+            } else if (null != group && StringUtils.isBlank(wxUser.getHeadImgUrl())) {
+                String url = "https://" + this.user.getLoginHost() + "/cgi-bin/mmwebwx-bin/webwxgeticon?seq=0&username=" + user.getUserName() + "&chatroomid=" + group.getEncryChatRoomId();
+                if (StringUtils.isNotBlank(user.getSkey())) {
+                    url = url + "&skey=" + user.getSkey();
+                }
+                request = initRequestBuilder(url).build();
             } else {
-                Request request = initRequestBuilder("https://" + this.user.getLoginHost() + wxUser.getHeadImgUrl()).build();
-                client.newCall(request).enqueue(new Callback() {
-                    @Override
-                    public void onFailure(Call call, IOException e) {
-                        reCall(call, this);
-                    }
-
-                    @Override
-                    public void onResponse(Call call, Response response) throws IOException {
-                        try {
-                            byte[] bytes = response.body().bytes();
-                            WxUtil.saveImg(bytes, tmpPath);
-                            consumer.accept(bytes);
-                        } finally {
-                            IOUtils.closeQuietly(response);
-                        }
-                    }
-                });
+                consumer.accept(null);
+                return;
             }
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    reCall(call, this);
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    try {
+                        byte[] bytes = response.body().bytes();
+                        WxUtil.saveImg(bytes, tmpPath);
+                        consumer.accept(bytes);
+                    } finally {
+                        IOUtils.closeQuietly(response);
+                    }
+                }
+            });
         }
     }
 
