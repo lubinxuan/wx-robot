@@ -173,11 +173,11 @@ public class Server extends BaseServer {
             messageSendListener.userNotFound(user, message);
             return null;
         }
-
+/*
         if (StringUtils.equals(wxUser.getUserName(), this.user.getUserName())) {
             logger.warn("[{}]WEB微信不能给自己发消息", getInstanceId());
             return null;
-        }
+        }*/
         return wxUser;
     }
 
