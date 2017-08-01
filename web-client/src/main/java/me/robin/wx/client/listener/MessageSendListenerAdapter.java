@@ -20,7 +20,7 @@ public class MessageSendListenerAdapter implements MessageSendListener{
     }
 
     @Override
-    public void failure(String user, String message,String errorMessage) {
+    public void failure(String user, String message,Integer retCode,String errorMessage) {
 
     }
 }

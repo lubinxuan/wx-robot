@@ -100,7 +100,7 @@ public class Server extends BaseServer {
                     sendMsg(wxUser, null, mediaId, 3, builder1, messageSendListener);
                 } else {
                     logger.info("[{}]消息发送失败:{}", getInstanceId(), JSON.toJSONString(content));
-                    messageSendListener.failure(user, fileName, TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
+                    messageSendListener.failure(user, fileName, ret, TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
                 }
             }
         });
@@ -154,7 +154,7 @@ public class Server extends BaseServer {
                     messageSendListener.success(wxUser.getUserName(), message, msgId, localId);
                 } else {
                     logger.info("[{}]消息发送失败:{}", getInstanceId(), syncRsp.toJSONString());
-                    messageSendListener.failure(wxUser.getUserName(), message, TypeUtils.castToString(JSONPath.eval(syncRsp, "BaseResponse.ErrMsg")));
+                    messageSendListener.failure(wxUser.getUserName(), message, ret, TypeUtils.castToString(JSONPath.eval(syncRsp, "BaseResponse.ErrMsg")));
                 }
             }
         });

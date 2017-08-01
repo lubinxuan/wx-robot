@@ -26,7 +26,7 @@ public class Robot {
 
     public static void main(String[] args) throws InterruptedException {
         ContactService contactService = new DefaultContactService();
-        Server server = new Server(WxConst.APP_ID, contactService);
+        Server server = new Server("", WxConst.APP_ID, contactService);
         MessageSendListener messageSendListener = new MessageSendListener() {
             @Override
             public void userNotFound(String user, String message) {
@@ -45,7 +45,7 @@ public class Robot {
             }
 
             @Override
-            public void failure(String user, String message,String errorMessage) {
+            public void failure(String user, String message, Integer retCode, String errorMessage) {
 
             }
         };
@@ -53,7 +53,7 @@ public class Robot {
         MessageService messageService = new DefaultMessageService();
 
         DefaultServerStatusListener serverStatusListener = new DefaultServerStatusListener(contactService);
-        RevokeMsgHandler revokeMsgHandler = new RevokeMsgHandler(messageSendListener,messageService,contactService);
+        RevokeMsgHandler revokeMsgHandler = new RevokeMsgHandler(messageSendListener, messageService, contactService);
         revokeMsgHandler.enable("lb_test");
         serverStatusListener.registerMessageHandler(WxConst.MessageType.REVOKE_MSG, revokeMsgHandler);
         serverStatusListener.registerMessageHandler(WxConst.MessageType.APP_MSG, new AppMsgHandler(messageSendListener));
