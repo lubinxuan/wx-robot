@@ -530,15 +530,15 @@ public abstract class BaseServer implements Runnable, WxApi {
             Request request;
             if (StringUtils.isNotBlank(wxUser.getHeadImgUrl())) {
                 request = initRequestBuilder("https://" + this.user.getLoginHost() + wxUser.getHeadImgUrl()).build();
-            } else if (null != group && StringUtils.isBlank(wxUser.getHeadImgUrl())) {
-                String url = "https://" + this.user.getLoginHost() + "/cgi-bin/mmwebwx-bin/webwxgeticon?seq=0&username=" + user.getUserName() + "&chatroomid=" + group.getEncryChatRoomId();
+            } else {
+                String url = "https://" + this.user.getLoginHost() + "/cgi-bin/mmwebwx-bin/webwxgeticon?seq=0&username=" + user.getUserName();
+                if (null != group) {
+                    url = url + "&chatroomid=" + group.getEncryChatRoomId();
+                }
                 if (StringUtils.isNotBlank(user.getSkey())) {
                     url = url + "&skey=" + user.getSkey();
                 }
                 request = initRequestBuilder(url).build();
-            } else {
-                consumer.accept(null);
-                return;
             }
             client.newCall(request).enqueue(new Callback() {
                 @Override

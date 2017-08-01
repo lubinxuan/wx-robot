@@ -169,6 +169,12 @@ public class Server extends BaseServer {
 
         WxUser wxUser = contactService.queryUser(user);
         if (null == wxUser) {
+            if (StringUtils.equals(user, loginUser().getUserName())) {
+                wxUser = new WxUser();
+                wxUser.setUserName(loginUser().getUserName());
+                wxUser.setNickName(loginUser().getNickName());
+                return wxUser;
+            }
             logger.info("[{}]找不到目标用户,不能发送消息", getInstanceId());
             messageSendListener.userNotFound(user, message);
             return null;
