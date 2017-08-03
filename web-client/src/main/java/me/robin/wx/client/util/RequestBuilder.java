@@ -141,6 +141,10 @@ public class RequestBuilder {
             req.url(urlBuilder.build());
         }
 
+        if(null!=headerMap&&!headerMap.isEmpty()){
+            headerMap.forEach(req::header);
+        }
+
         RequestBody requestBody = null;
 
         if (null != jsonData) {

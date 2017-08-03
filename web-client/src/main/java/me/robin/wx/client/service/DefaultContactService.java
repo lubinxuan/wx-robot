@@ -52,6 +52,25 @@ public class DefaultContactService implements ContactService {
     }
 
     @Override
+    public void deleteContact(String userName) {
+        WxUser wxUser = this.userNameMap.remove(userName);
+        if (null != wxUser) {
+            this.nickNameMap.remove(wxUser.getNickName());
+            if (StringUtils.isNotBlank(wxUser.getAlias())) {
+                aliasMap.remove(wxUser.getAlias());
+            }
+            if (StringUtils.isNotBlank(wxUser.getRemarkName())) {
+                remarkMap.remove(wxUser.getRemarkName());
+            }
+        }
+    }
+
+    @Override
+    public void updateContact(JSONObject contact) {
+
+    }
+
+    @Override
     public WxUser queryUserByAlias(String alias) {
         return aliasMap.get(alias);
     }

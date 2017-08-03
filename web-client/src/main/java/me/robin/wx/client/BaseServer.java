@@ -213,6 +213,7 @@ public abstract class BaseServer implements Runnable, WxApi {
             }
             CountDownLatch latch = batchGetContactTask(updateContactList);
             latch.await();
+            updateContactList.clear();
         }
     }
 
@@ -229,10 +230,6 @@ public abstract class BaseServer implements Runnable, WxApi {
         builder.json("Count", updateContactList.size());
         builder.json("List", updateContactList);
         baseRequest(builder);
-        try {
-            updateContactList.clear();
-        } catch (UnsupportedOperationException ignore) {
-        }
         Callback callback = new BaseJsonCallback() {
             @Override
             void process(Call call, Response response, JSONObject content) {

@@ -1,6 +1,7 @@
 package me.robin.wx.client.service;
 
 import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import me.robin.wx.client.model.WxGroup;
 import me.robin.wx.client.model.WxUser;
 
@@ -24,13 +25,17 @@ public interface ContactService {
 
     void addWxUser(WxUser wxUser);
 
+    void deleteContact(String userName);
+
+    void updateContact(JSONObject contact);
+
     void clearContact();
 
     List<WxGroup> listAllGroup();
 
     void updateGroupUserInfo(WxUser wxUser);
 
-    void updateGroupUserInfo(WxGroup group,WxUser wxUser);
+    void updateGroupUserInfo(WxGroup group, WxUser wxUser);
 
     boolean groupInitialized(String groupName);
 
