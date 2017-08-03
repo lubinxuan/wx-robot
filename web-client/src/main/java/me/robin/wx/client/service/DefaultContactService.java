@@ -71,6 +71,11 @@ public class DefaultContactService implements ContactService {
     }
 
     @Override
+    public boolean contain(String userName) {
+        return this.userNameMap.containsKey(userName);
+    }
+
+    @Override
     public WxUser queryUserByAlias(String alias) {
         return aliasMap.get(alias);
     }

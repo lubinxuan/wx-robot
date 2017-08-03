@@ -29,6 +29,14 @@ public interface ContactService {
 
     void updateContact(JSONObject contact);
 
+    /**
+     * 判断是否已经在通讯录里面
+     *
+     * @param userName 加密用户名
+     * @return 状态
+     */
+    boolean contain(String userName);
+
     void clearContact();
 
     List<WxGroup> listAllGroup();
