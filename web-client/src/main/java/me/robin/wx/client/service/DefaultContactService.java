@@ -36,6 +36,9 @@ public class DefaultContactService implements ContactService {
     }
 
     public void addWxUser(WxUser wxUser) {
+
+        this.deleteContact(wxUser.getUserName());
+
         if (StringUtils.isNotBlank(wxUser.getAlias())) {
             aliasMap.put(wxUser.getAlias(), wxUser);
         }

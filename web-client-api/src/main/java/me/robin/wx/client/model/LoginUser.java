@@ -2,11 +2,14 @@ package me.robin.wx.client.model;
 
 import com.alibaba.fastjson.JSONObject;
 import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
 /**
  * Created by xuanlubin on 2017/4/19.
  */
-@Data
+@Setter
+@Getter
 public class LoginUser {
     private String uuid;
 
@@ -29,5 +32,6 @@ public class LoginUser {
     private String loginHost = "wx.qq.com";
 
     private JSONObject syncKey;
+    private JSONObject syncCheckKey;
 
 }

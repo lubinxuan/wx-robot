@@ -22,7 +22,7 @@ public abstract class ExpireListener {
         return this.expire > 0 && (System.currentTimeMillis() - lastLoginRequest) > this.expire;
     }
 
-    public abstract boolean expire(BaseServer server);
+    public abstract boolean expire(BaseServer server,String uid);
 
     public long getExpire() {
         return expire;

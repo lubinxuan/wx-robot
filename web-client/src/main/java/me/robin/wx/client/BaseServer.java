@@ -5,9 +5,12 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.fastjson.JSONPath;
 import com.alibaba.fastjson.util.TypeUtils;
+import lombok.Getter;
+import lombok.Setter;
 import me.robin.wx.client.cookie.CookieInterceptor;
 import me.robin.wx.client.cookie.MemoryCookieStore;
 import me.robin.wx.client.listener.EmptyServerStatusListener;
+import me.robin.wx.client.listener.MessageSendListener;
 import me.robin.wx.client.listener.ServerStatusListener;
 import me.robin.wx.client.model.LoginUser;
 import me.robin.wx.client.model.WxGroup;
@@ -18,6 +21,7 @@ import me.robin.wx.client.util.RequestBuilder;
 import me.robin.wx.client.util.ResponseReadUtils;
 import me.robin.wx.client.util.WxUtil;
 import okhttp3.*;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -25,10 +29,13 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.CookieStore;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -44,7 +51,7 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private static final ExpireListener DEFAULT_EXPIRE_LISTENER = new ExpireListener() {
         @Override
-        public boolean expire(BaseServer server) {
+        public boolean expire(BaseServer server, String uid) {
             return false;
         }
     };
@@ -80,6 +87,10 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private final CountDownLatch NO_WAIT = new CountDownLatch(0);
 
+    private final AtomicLong idCounter = new AtomicLong(0);
+
+    private final DateFormat dateFormat = new SimpleDateFormat("EEE d MMM yyyy HH:mm:ss 'GMT'", Locale.CHINA);
+
     private static final BiConsumer<Boolean, String> DEFAULT = (aBoolean, s) -> {
 
     };
@@ -95,6 +106,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                 .addInterceptor(new CookieInterceptor(this.cookieStore))
                 .build();
         this.timer = new Timer("GroupContactSyncThread-" + instanceId);
+        this.dateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
     }
 
     @Override
@@ -181,6 +193,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                 syncCheck();
                 contactService.updateContact(content.getJSONArray("MemberList"));
                 login = true;
+                statusListener.loginSuccess();
                 synchronized (BaseServer.this.user) {
                     BaseServer.this.user.notifyAll();
                 }
@@ -198,9 +211,11 @@ public abstract class BaseServer implements Runnable, WxApi {
         List<Map<String, String>> updateContactList = new ArrayList<>();
         while (true) {
             List<String[]> groupNameList = new ArrayList<>();
+            boolean fromGroup = true;
             int rows = lazyUpdateGroupQueue.drainTo(groupNameList, 10);
             if (rows < 1) {
-                rows = lazyUpdateGroupMemberQueue.drainTo(groupNameList, 20);
+                rows = lazyUpdateGroupMemberQueue.drainTo(groupNameList, 50);
+                fromGroup = false;
             }
             if (rows < 1) {
                 return;
@@ -211,17 +226,40 @@ public abstract class BaseServer implements Runnable, WxApi {
                 param.put("UserName", contactInfo[0]);
                 updateContactList.add(param);
             }
-            CountDownLatch latch = batchGetContactTask(updateContactList);
-            latch.await();
-            updateContactList.clear();
+            try {
+                if (batchGetContactTask(updateContactList, null)) {
+                    updateContactList.clear();
+                }
+            } catch (Exception e) {
+                logger.warn("获取通讯录详情");
+            }
+            if (!updateContactList.isEmpty()) {
+                if (fromGroup) {
+                    lazyUpdateGroupQueue.addAll(groupNameList);
+                } else {
+                    lazyUpdateGroupMemberQueue.addAll(groupNameList);
+                }
+                break;
+            }
         }
     }
 
-    private CountDownLatch batchGetContactTask(List<Map<String, String>> updateContactList) {
+    public boolean updateUserContact(String userName, Consumer<WxUser> successCallback) throws IOException {
+        Map<String, String> param = new HashMap<>();
+        param.put("EncryChatRoomId", "");
+        param.put("UserName", userName);
+        Consumer<List<WxUser>> listConsumer = null == successCallback ? null : wxUsers -> {
+            if (null != wxUsers && !wxUsers.isEmpty()) {
+                successCallback.accept(wxUsers.get(0));
+            }
+        };
+        return batchGetContactTask(Collections.singletonList(param), listConsumer);
+    }
+
+    private boolean batchGetContactTask(List<Map<String, String>> updateContactList, Consumer<List<WxUser>> listConsumer) throws IOException {
         if (updateContactList.isEmpty()) {
-            return NO_WAIT;
+            return true;
         }
-        CountDownLatch latch = new CountDownLatch(1);
         logger.info("开始同步通讯录详情:{}", JSON.toJSONString(updateContactList));
         RequestBuilder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxbatchgetcontact");
         builder.query("type", "ex");
@@ -230,46 +268,49 @@ public abstract class BaseServer implements Runnable, WxApi {
         builder.json("Count", updateContactList.size());
         builder.json("List", updateContactList);
         baseRequest(builder);
-        Callback callback = new BaseJsonCallback() {
-            @Override
-            void process(Call call, Response response, JSONObject content) {
-                latch.countDown();
-                Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
-                if (null != ret && ret == 0) {
-                    logger.info("[{}]同步到群组信息", instanceId);
-                    JSONArray contactList = content.getJSONArray("ContactList");
-                    for (int i = 0; i < contactList.size(); i++) {
-                        WxUser wxUser = WxUtil.parse(contactList.getJSONObject(i));
-                        if (wxUser instanceof WxGroup) {
-                            WxGroup group = (WxGroup) wxUser;
-                            WxGroup wxGroup = (WxGroup) contactService.queryUserByUserName(group.getUserName());
-                            if (wxGroup == null) {
-                                contactService.addWxUser(group);
-                                wxGroup = group;
-                            } else {
-                                wxGroup.setMemberCount(group.getMemberCount());
-                                wxGroup.setMemberList(group.getMemberList());
-                                wxGroup.setEncryChatRoomId(group.getEncryChatRoomId());
-                            }
-                            if (groupMemberDetail) {
-                                //群组成员信息加入等待更新列表
-                                for (WxUser user : wxGroup.getMemberList()) {
-                                    lazyUpdateGroupMemberQueue.offer(new String[]{user.getUserName(), group.getEncryChatRoomId()});
-                                }
-                            }
-                        } else {
-                            if (StringUtils.isNotBlank(wxUser.getEncryChatRoomId())) {
-                                contactService.updateGroupUserInfo(wxUser);
-                            }
+        Response response = builder.execute(client);
+        JSONObject content = readFromResp(response);
+        Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
+        if (null != ret && ret == 0) {
+            logger.info("[{}]同步到群组信息", instanceId);
+            JSONArray contactList = content.getJSONArray("ContactList");
+            List<WxUser> userList = new ArrayList<>();
+            for (int i = 0; i < contactList.size(); i++) {
+                WxUser wxUser = WxUtil.parse(contactList.getJSONObject(i));
+                userList.add(wxUser);
+                if (wxUser instanceof WxGroup) {
+                    WxGroup group = (WxGroup) wxUser;
+                    WxGroup wxGroup = (WxGroup) contactService.queryUserByUserName(group.getUserName());
+                    if (wxGroup == null) {
+                        contactService.addWxUser(group);
+                        wxGroup = group;
+                    } else {
+                        wxGroup.setMemberCount(group.getMemberCount());
+                        wxGroup.setMemberList(group.getMemberList());
+                        wxGroup.setEncryChatRoomId(group.getEncryChatRoomId());
+                    }
+                    if (groupMemberDetail) {
+                        //群组成员信息加入等待更新列表
+                        for (WxUser user : wxGroup.getMemberList()) {
+                            lazyUpdateGroupMemberQueue.offer(new String[]{user.getUserName(), group.getEncryChatRoomId()});
                         }
                     }
                 } else {
-                    logger.warn("[{}]群组信息获取异常:{}", instanceId, JSON.toJSONString(content));
+                    if (StringUtils.isNotBlank(wxUser.getEncryChatRoomId())) {
+                        contactService.updateGroupUserInfo(wxUser);
+                    } else {
+                        contactService.addWxUser(wxUser);
+                    }
                 }
             }
-        };
-        builder.execute(client, callback);
-        return latch;
+            if (null != listConsumer) {
+                listConsumer.accept(userList);
+            }
+            return true;
+        } else {
+            logger.warn("[{}]群组信息获取异常:{}", instanceId, JSON.toJSONString(content));
+            return false;
+        }
     }
 
 
@@ -285,7 +326,7 @@ public abstract class BaseServer implements Runnable, WxApi {
         builder.query("uin", user.getUin());
         builder.query("sid", user.getSid());
         builder.query("deviceid", WxUtil.randomDeviceId());
-        builder.query("synckey", syncKey());
+        builder.query("synckey", formatSyncKey(user.getSyncCheckKey()));
         builder.query("_", System.currentTimeMillis());
         Callback callback = new BaseCallback() {
             @Override
@@ -311,11 +352,18 @@ public abstract class BaseServer implements Runnable, WxApi {
                         logger.info("[{}]客户端退出了", instanceId);
                         WxUtil.deleteImgTmpDir(BaseServer.this.user.getUin());
                         BaseServer.this.contactService.clearContact();
-                        if (!expireListener.expire(BaseServer.this)) {
+                        if (!expireListener.expire(BaseServer.this, BaseServer.this.user.getUin())) {
                             queryNewUUID();
                         } else {
                             SyncMonitor.evict(BaseServer.this);
                         }
+                        return;
+                    case 1102:
+                        login = false;
+                        logger.info("[{}]会话异常", instanceId);
+                        WxUtil.deleteImgTmpDir(BaseServer.this.user.getUin());
+                        BaseServer.this.contactService.clearContact();
+                        SyncMonitor.evict(BaseServer.this);
                         return;
                     default:
                         logger.warn("[{}]没有正常获取到同步信息 : {}", instanceId, content);
@@ -344,11 +392,13 @@ public abstract class BaseServer implements Runnable, WxApi {
                 boolean syncNow = true;
                 if (null != ret && 0 == ret) {
                     logger.debug("[{}]同步成功", instanceId);
-                    JSONObject syncKey = syncRsp.getJSONObject("SyncCheckKey");
+                    JSONObject syncKey = syncRsp.getJSONObject("SyncKey");
+                    JSONObject syncCheckKey = syncRsp.getJSONObject("SyncCheckKey");
                     if (StringUtils.equals(syncKey.toJSONString(), user.getSyncKey().toJSONString())) {
                         logger.warn("[{}]同步key没有更新", instanceId);
                         syncNow = false;
                     } else {
+                        user.setSyncCheckKey(syncCheckKey);
                         user.setSyncKey(syncKey);
                     }
                     String skey = syncRsp.getString("SKey");
@@ -360,9 +410,9 @@ public abstract class BaseServer implements Runnable, WxApi {
                         JSONArray addMsgList = syncRsp.getJSONArray("AddMsgList");
                         checkGroupNotInContactList(addMsgList);
                         statusListener.onAddMsgList(addMsgList, BaseServer.this);
-                        statusListener.onDelContactList(syncRsp.getJSONArray("ModContactList"), BaseServer.this);
-                        statusListener.onModChatRoomMemberList(syncRsp.getJSONArray("DelContactList"), BaseServer.this);
-                        statusListener.onModContactList(syncRsp.getJSONArray("ModChatRoomMemberList"), BaseServer.this);
+                        statusListener.onDelContactList(syncRsp.getJSONArray("DelContactList"), BaseServer.this);
+                        statusListener.onModChatRoomMemberList(syncRsp.getJSONArray("ModChatRoomMemberList"), BaseServer.this);
+                        statusListener.onModContactList(syncRsp.getJSONArray("ModContactList"), BaseServer.this);
                     }
                 } else {
                     logger.warn("[{}]同步异常:{}", instanceId, syncRsp.toJSONString());
@@ -533,7 +583,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                     case "400":
                         logger.info("[{}]二维码失效", instanceId);
                         BaseServer.this.user.setUuid(null);
-                        if (expireListener.expire() && expireListener.expire(BaseServer.this)) {
+                        if (expireListener.expire() && expireListener.expire(BaseServer.this, BaseServer.this.user.getUin())) {
                             SyncMonitor.evict(BaseServer.this);
                             return;
                         }
@@ -541,7 +591,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                         break;
                     default:
                         logger.info("[{}]扫码登录发生未知异常 服务器响应:{}", instanceId, content);
-                        if (expireListener.expire(BaseServer.this)) {
+                        if (expireListener.expire(BaseServer.this, BaseServer.this.user.getUin())) {
                             SyncMonitor.evict(BaseServer.this);
                         }
                 }
@@ -587,6 +637,80 @@ public abstract class BaseServer implements Runnable, WxApi {
                 }
             });
         }
+    }
+
+
+    public void uploadFile(String user, FilePart filePart, MessageSendListener messageSendListener, BiConsumer<WxUser, String> successUploadCallback) {
+        WxUser wxUser = getWxUser(user, filePart.getFileName(), messageSendListener);
+        if (wxUser == null) return;
+        RequestBuilder builder = initRequestBuilder(Conf.API.webwxuploadmedia);
+        builder.query("f", "json");
+        long id = idCounter.incrementAndGet();
+        builder.post("id", "WU_FILE_" + id);
+        builder.post("name", "file_" + id);
+        builder.post("type", "image/png");
+        synchronized (this.dateFormat) {
+            builder.post("lastModifiedDate", this.dateFormat.format(new Date()));
+        }
+        builder.post("size", filePart.getData().length);
+        builder.post("mediatype", filePart.getMediaType());
+
+        Map<String, Object> requestBody = baseRequest();
+        requestBody.put("UploadType", 2);
+        requestBody.put("ClientMediaId", System.currentTimeMillis());
+        requestBody.put("TotalLen", filePart.getData().length);
+        requestBody.put("StartPos", 0);
+        requestBody.put("DataLen", filePart.getData().length);
+        requestBody.put("MediaType", 4);
+        requestBody.put("FromUserName", this.user.getUserName());
+        requestBody.put("ToUserName", wxUser.getUserName());
+        requestBody.put("FileMd5", DigestUtils.md5Hex(filePart.getData()));
+        builder.post("uploadmediarequest", JSON.toJSONString(requestBody));
+        builder.post("webwx_data_ticket", this.user.getWebwxDataTicket());
+        builder.post("pass_ticket", this.user.getPassTicket());
+        builder.file("filename", "file_" + id, filePart.getData(), filePart.getContentType());
+
+        builder.execute(client, new BaseJsonCallback() {
+            @Override
+            void process(Call call, Response response, JSONObject content) {
+                Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
+                if (null != ret && 0 == ret) {
+                    logger.info("[{}][]文件上传成功", getInstanceId());
+                    String mediaId = content.getString("MediaId");
+                    successUploadCallback.accept(wxUser, mediaId);
+                } else {
+                    logger.info("[{}]消息发送失败:{}", getInstanceId(), JSON.toJSONString(content));
+                    messageSendListener.failure(user, filePart.getFileName(), ret, TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
+                }
+            }
+        });
+    }
+
+    WxUser getWxUser(String user, String message, MessageSendListener messageSendListener) {
+        if (!checkLogin()) {
+            logger.info("[{}]还未完成登录,不能发送消息", getInstanceId());
+            messageSendListener.serverNotReady(user, message);
+            return null;
+        }
+
+        WxUser wxUser = contactService.queryUser(user);
+        if (null == wxUser) {
+            if (StringUtils.equals(user, loginUser().getUserName())) {
+                wxUser = new WxUser();
+                wxUser.setUserName(loginUser().getUserName());
+                wxUser.setNickName(loginUser().getNickName());
+                return wxUser;
+            }
+            logger.info("[{}]找不到目标用户,不能发送消息", getInstanceId());
+            messageSendListener.userNotFound(user, message);
+            return null;
+        }
+/*
+        if (StringUtils.equals(wxUser.getUserName(), this.user.getUserName())) {
+            logger.warn("[{}]WEB微信不能给自己发消息", getInstanceId());
+            return null;
+        }*/
+        return wxUser;
     }
 
     /**
@@ -648,8 +772,8 @@ public abstract class BaseServer implements Runnable, WxApi {
      *
      * @return
      */
-    private String syncKey() {
-        JSONArray array = user.getSyncKey().getJSONArray("List");
+    private String formatSyncKey(JSONObject keys) {
+        JSONArray array = keys.getJSONArray("List");
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < array.size(); i++) {
             JSONObject key = array.getJSONObject(i);
@@ -717,6 +841,15 @@ public abstract class BaseServer implements Runnable, WxApi {
         abstract void process(Call call, Response response, String content);
     }
 
+    public static JSONObject readFromResp(Response response) throws IOException {
+        try {
+            String content = ResponseReadUtils.read(response);
+            return JSON.parseObject(content);
+        } finally {
+            IOUtils.closeQuietly(response);
+        }
+    }
+
     public abstract class BaseJsonCallback implements Callback {
 
         @Override
@@ -728,14 +861,22 @@ public abstract class BaseServer implements Runnable, WxApi {
         @Override
         public void onResponse(Call call, Response response) throws IOException {
             try {
-                String content = ResponseReadUtils.read(response);
-                this.process(call, response, JSON.parseObject(content));
+                this.process(call, response, readFromResp(response));
             } finally {
                 IOUtils.closeQuietly(response);
             }
         }
 
         abstract void process(Call call, Response response, JSONObject content);
+    }
+
+    @Getter
+    @Setter
+    public class FilePart {
+        private String fileName;
+        private byte[] data;
+        private String mediaType;
+        private String contentType;
     }
 
 

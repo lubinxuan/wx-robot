@@ -20,4 +20,6 @@ public interface ServerStatusListener {
     void onDelContactList(JSONArray delContactList, WxApi api);
 
     void onModChatRoomMemberList(JSONArray modChatRoomMemberList, WxApi api);
+
+    void loginSuccess();
 }

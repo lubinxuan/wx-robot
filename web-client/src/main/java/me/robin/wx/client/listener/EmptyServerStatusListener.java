@@ -42,4 +42,9 @@ public class EmptyServerStatusListener implements ServerStatusListener {
     public void onModChatRoomMemberList(JSONArray modChatRoomMemberList, WxApi api) {
 
     }
+
+    @Override
+    public void loginSuccess() {
+
+    }
 }

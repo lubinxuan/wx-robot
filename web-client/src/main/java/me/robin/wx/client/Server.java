@@ -1,6 +1,5 @@
 package me.robin.wx.client;
 
-import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.fastjson.JSONPath;
 import com.alibaba.fastjson.util.TypeUtils;
@@ -13,11 +12,11 @@ import me.robin.wx.client.util.RequestBuilder;
 import me.robin.wx.client.util.WxUtil;
 import okhttp3.Call;
 import okhttp3.Response;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -57,53 +56,18 @@ public class Server extends BaseServer {
 
     @Override
     public void sendImgMessage(String user, String fileName, byte[] imgBytes, MessageSendListener messageSendListener) {
-        WxUser wxUser = getWxUser(user, fileName, messageSendListener);
-        if (wxUser == null) return;
-        RequestBuilder builder = initRequestBuilder(Conf.API.webwxuploadmedia);
-        builder.query("f", "json");
-        long id = idCounter.incrementAndGet();
-        builder.post("id", "WU_FILE_" + id);
-        builder.post("name", "file_" + id);
-        builder.post("type", "image/png");
-        synchronized (this.dateFormat) {
-            builder.post("lastModifiedDate", this.dateFormat.format(new Date()));
-        }
-        builder.post("size", Integer.toString(imgBytes.length));
-        builder.post("mediatype", "pic");
-
-        Map<String, Object> requestBody = baseRequest();
-        requestBody.put("UploadType", 2);
-        requestBody.put("ClientMediaId", System.currentTimeMillis());
-        requestBody.put("TotalLen", imgBytes.length);
-        requestBody.put("StartPos", 0);
-        requestBody.put("DataLen", imgBytes.length);
-        requestBody.put("MediaType", 4);
-        requestBody.put("FromUserName", this.user.getUserName());
-        requestBody.put("ToUserName", wxUser.getUserName());
-        requestBody.put("FileMd5", DigestUtils.md5Hex(imgBytes));
-        builder.post("uploadmediarequest", JSON.toJSONString(requestBody));
-        builder.post("webwx_data_ticket", this.user.getWebwxDataTicket());
-        builder.post("pass_ticket", this.user.getPassTicket());
-        builder.file("filename", "file_" + id, imgBytes, "image/png");
-
-        builder.execute(client, new BaseJsonCallback() {
-            @Override
-            void process(Call call, Response response, JSONObject content) {
-                Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
-                if (null != ret && 0 == ret) {
-                    logger.info("[{}][]文件上传成功", getInstanceId());
-                    String mediaId = content.getString("MediaId");
-                    RequestBuilder imgReq = initRequestBuilder(Conf.API.webwxsendmsgimg);
-                    imgReq.query("fun", "async");
-                    imgReq.query("f", "json");
-                    imgReq.query("lang", "zh_CN");
-                    imgReq.query("pass_ticket", loginUser().getPassTicket());
-                    sendMsg(wxUser, null, mediaId, 3, imgReq, messageSendListener);
-                } else {
-                    logger.info("[{}]消息发送失败:{}", getInstanceId(), JSON.toJSONString(content));
-                    messageSendListener.failure(user, fileName, ret, TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
-                }
-            }
+        FilePart part = new FilePart();
+        part.setFileName(fileName);
+        part.setContentType("image/png");
+        part.setData(imgBytes);
+        part.setMediaType("pic");
+        super.uploadFile(user, part, messageSendListener, (wxUser, mediaId) -> {
+            RequestBuilder imgReq = initRequestBuilder(Conf.API.webwxsendmsgimg);
+            imgReq.query("fun", "async");
+            imgReq.query("f", "json");
+            imgReq.query("lang", "zh_CN");
+            imgReq.query("pass_ticket", loginUser().getPassTicket());
+            sendMsg(wxUser, null, mediaId, 3, imgReq, messageSendListener);
         });
     }
 
@@ -159,40 +123,13 @@ public class Server extends BaseServer {
         });
     }
 
-    private WxUser getWxUser(String user, String message, MessageSendListener messageSendListener) {
-        if (!checkLogin()) {
-            logger.info("[{}]还未完成登录,不能发送消息", getInstanceId());
-            messageSendListener.serverNotReady(user, message);
-            return null;
-        }
-
-        WxUser wxUser = contactService.queryUser(user);
-        if (null == wxUser) {
-            if (StringUtils.equals(user, loginUser().getUserName())) {
-                wxUser = new WxUser();
-                wxUser.setUserName(loginUser().getUserName());
-                wxUser.setNickName(loginUser().getNickName());
-                return wxUser;
-            }
-            logger.info("[{}]找不到目标用户,不能发送消息", getInstanceId());
-            messageSendListener.userNotFound(user, message);
-            return null;
-        }
-/*
-        if (StringUtils.equals(wxUser.getUserName(), this.user.getUserName())) {
-            logger.warn("[{}]WEB微信不能给自己发消息", getInstanceId());
-            return null;
-        }*/
-        return wxUser;
-    }
-
     /**
      * 修改群聊名称
      *
      * @param chatRoom
      * @param name
      */
-    public void modChatRoomName(String chatRoom, String name) {
+    public void modChatRoomName(String chatRoom, String name) throws IOException {
         if (!checkLogin()) {
             logger.info("[{}]还未完成登录,不能发送消息", getInstanceId());
         } else {
@@ -205,17 +142,14 @@ public class Server extends BaseServer {
                 baseRequest(builder);
                 builder.json("NewTopic", name);
                 builder.json("ChatRoomName", wxUser.getUserName());
-                builder.execute(client, new BaseJsonCallback() {
-                    @Override
-                    void process(Call call, Response response, JSONObject content) {
-                        Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
-                        if (null != ret && 0 == ret) {
-                            logger.info("[{}]群聊名称修改修改成功", getInstanceId());
-                        } else {
-                            logger.info("[{}]群聊名称修改失败:{}", getInstanceId(), content.toJSONString());
-                        }
-                    }
-                });
+                Response response = builder.execute(client);
+                JSONObject content = readFromResp(response);
+                Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
+                if (null != ret && 0 == ret) {
+                    logger.info("[{}]群聊名称修改修改成功", getInstanceId());
+                } else {
+                    logger.info("[{}]群聊名称修改失败:{}", getInstanceId(), content.toJSONString());
+                }
             } else {
                 logger.warn("[{}]要求修改的不是群", getInstanceId());
             }
@@ -228,9 +162,10 @@ public class Server extends BaseServer {
      * @param userName
      * @param verifyContent
      */
-    public void addContact(String userName, String verifyContent) {
+    public boolean addContact(String userName, String verifyContent) throws IOException {
         if (!checkLogin()) {
             logger.info("[{}]还未完成登录,无法添加好友", getInstanceId());
+            return false;
         } else {
             RequestBuilder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxverifyuser");
             builder.query("r", System.currentTimeMillis());
@@ -246,21 +181,20 @@ public class Server extends BaseServer {
             verifyUser.put("VerifyUserTicket", "");
             builder.json("VerifyUserList", Collections.singleton(verifyUser));
             builder.json("SceneList", new int[]{33});
-            builder.execute(client, new BaseJsonCallback() {
-                @Override
-                void process(Call call, Response response, JSONObject content) {
-                    Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
-                    if (null != ret && 0 == ret) {
-                        logger.info("[{}]好友请求成功", getInstanceId());
-                    } else {
-                        logger.info("[{}]好友请求失败:{}", getInstanceId(), content.toJSONString());
-                    }
-                }
-            });
+            Response response = builder.execute(client);
+            JSONObject content = readFromResp(response);
+            Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
+            if (null != ret && 0 == ret) {
+                logger.info("[{}]好友请求成功", getInstanceId());
+                return true;
+            } else {
+                logger.info("[{}]好友请求失败:{}", getInstanceId(), content.toJSONString());
+                return false;
+            }
         }
     }
 
-    public void modifyRemark(String userName, String remark) {
+    public void modifyRemark(String userName, String remark) throws IOException {
         if (!checkLogin()) {
             logger.info("[{}]还未完成登录,无法进行备注修改", getInstanceId());
         } else {
@@ -270,17 +204,14 @@ public class Server extends BaseServer {
             builder.json("CmdId", 2);
             builder.json("RemarkName", remark);
             builder.json("UserName", userName);
-            builder.execute(client, new BaseJsonCallback() {
-                @Override
-                void process(Call call, Response response, JSONObject content) {
-                    Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
-                    if (null != ret && 0 == ret) {
-                        logger.info("[{}]备注修改成功", getInstanceId());
-                    } else {
-                        logger.info("[{}]备注修改失败:{}", getInstanceId(), content.toJSONString());
-                    }
-                }
-            });
+            Response response = builder.execute(client);
+            JSONObject content = readFromResp(response);
+            Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
+            if (null != ret && 0 == ret) {
+                logger.info("[{}]备注修改成功", getInstanceId());
+            } else {
+                logger.info("[{}]备注修改失败:{}", getInstanceId(), content.toJSONString());
+            }
         }
     }
 }
