@@ -8,10 +8,7 @@ import me.robin.wx.client.WxApi;
  * Created by xuanlubin on 2017/4/19.
  */
 public interface ServerStatusListener {
-
     void registerMessageHandler(int msgType, MsgHandler msgHandler);
-
-    void onUUIDSuccess(String url);
 
     void onAddMsgList(JSONArray addMsgList, WxApi api);
 
@@ -20,6 +17,4 @@ public interface ServerStatusListener {
     void onDelContactList(JSONArray delContactList, WxApi api);
 
     void onModChatRoomMemberList(JSONArray modChatRoomMemberList, WxApi api);
-
-    void loginSuccess();
 }

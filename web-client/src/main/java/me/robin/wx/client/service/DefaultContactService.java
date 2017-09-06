@@ -2,6 +2,7 @@ package me.robin.wx.client.service;
 
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
+import lombok.extern.slf4j.Slf4j;
 import me.robin.wx.client.model.WxGroup;
 import me.robin.wx.client.model.WxUser;
 import me.robin.wx.client.util.WxUtil;
@@ -12,13 +13,13 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.function.BiFunction;
 
 /**
  * Created by xuanlubin on 2017/4/19.
  */
+@Slf4j
 public class DefaultContactService implements ContactService {
-
-    private static final Logger logger = LoggerFactory.getLogger(DefaultContactService.class);
 
     protected Map<String, WxUser> aliasMap = new ConcurrentHashMap<>();
     protected Map<String, WxUser> remarkMap = new ConcurrentHashMap<>();
@@ -44,10 +45,6 @@ public class DefaultContactService implements ContactService {
         }
         if (StringUtils.isNotBlank(wxUser.getRemarkName())) {
             remarkMap.put(wxUser.getRemarkName(), wxUser);
-        }
-
-        if (StringUtils.startsWith(wxUser.getUserName(), "@@")) {
-            groupUserNames.add(wxUser.getUserName());
         }
 
         nickNameMap.put(wxUser.getNickName(), wxUser);
@@ -99,6 +96,12 @@ public class DefaultContactService implements ContactService {
     }
 
     @Override
+    public WxUser queryGroupMember(WxGroup wxGroup, String memberUserName) {
+        Optional<WxUser> member = wxGroup.getMemberList().stream().filter(u -> StringUtils.equals(u.getUserName(), memberUserName)).findAny();
+        return member.orElse(null);
+    }
+
+    @Override
     public WxUser queryUser(String queryString) {
         //根据备注名查找用户
         WxUser wxUser = queryUserByRemark(queryString);
@@ -138,8 +141,14 @@ public class DefaultContactService implements ContactService {
             WxUser tmp = group.getMemberList().get(i);
             if (StringUtils.equals(tmp.getUserName(), wxUser.getUserName())) {
                 group.getMemberList().set(i, wxUser);
+                userNameMap.computeIfPresent(wxUser.getUserName(), (s, wxUser1) -> {
+                    wxUser1.getGroupNames().add(group.getNickName());
+                    return wxUser1;
+                });
+                return;
             }
         }
+        group.getMemberList().add(wxUser);
     }
 
     @Override

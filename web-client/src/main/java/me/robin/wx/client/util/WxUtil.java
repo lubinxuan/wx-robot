@@ -2,8 +2,10 @@ package me.robin.wx.client.util;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import me.robin.wx.client.model.LoginUser;
 import me.robin.wx.client.model.WxGroup;
 import me.robin.wx.client.model.WxUser;
+import me.robin.wx.client.service.ContactService;
 import okhttp3.MediaType;
 import okhttp3.RequestBody;
 import org.apache.commons.io.FileUtils;

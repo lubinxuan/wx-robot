@@ -40,7 +40,7 @@ public class SyncMonitor {
                         continue;
                     }
                     if (current - lastSyncTime > waring) {
-                        logger.warn("微信实例[{}] 已经{}分钟没有更新同步状态了", instanceId, TimeUnit.MILLISECONDS.toSeconds(current - lastSyncTime));
+                        logger.warn("微信实例[{}] 已经{}分钟没有更新同步状态了", instanceId, TimeUnit.MILLISECONDS.toMinutes(current - lastSyncTime));
                     }
                 }
             }

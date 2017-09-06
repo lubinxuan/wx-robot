@@ -21,6 +21,8 @@ public interface ContactService {
 
     WxUser queryUserByUserName(String userName);
 
+    WxUser queryGroupMember(WxGroup wxGroup,String memberUserName);
+
     WxUser queryUser(String queryString);
 
     void addWxUser(WxUser wxUser);

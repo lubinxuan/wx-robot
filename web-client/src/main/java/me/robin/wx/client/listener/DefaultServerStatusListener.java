@@ -4,11 +4,13 @@ import com.alibaba.fastjson.JSONArray;
 import me.robin.wx.client.MsgChainHandler;
 import me.robin.wx.client.MsgHandler;
 import me.robin.wx.client.WxApi;
+import me.robin.wx.client.model.WxGroup;
 import me.robin.wx.client.model.WxMsg;
 import me.robin.wx.client.model.WxUser;
 import me.robin.wx.client.service.ContactService;
 import me.robin.wx.client.service.DefaultContactService;
 import me.robin.wx.client.util.WxUtil;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,16 +47,22 @@ public class DefaultServerStatusListener extends EmptyServerStatusListener imple
         for (int i = 0; i < addMsgList.size(); i++) {
             WxMsg message = addMsgList.getObject(i, WxMsg.class);
             String MsgId = message.getMsgID();
-            String FromUserName = getNickName(message.getFromUserName());
-            String ToUserName = getNickName(message.getToUserName());
+            String fromNickName = getNickName(message.getFromUserName());
+            String toNickName = getNickName(message.getToUserName());
             message.setContent(WxUtil.revertXml(message.getContent()));
             String Content = message.getContent();
             int msgType = message.getMsgType();
 
-            WxUser from = contactService.queryUserByUserName(FromUserName);
-            WxUser to = contactService.queryUserByUserName(ToUserName);
+            WxUser from = contactService.queryUserByUserName(message.getFromUserName());
+            if (null != from && from.isGroup()) {
+                String memberUserName = StringUtils.substringBefore(Content, ":");
+                WxUser member = contactService.queryGroupMember((WxGroup) from, memberUserName);
+                if (null != member) {
+                    Content = StringUtils.replace(Content, memberUserName, member.getNickName());
+                }
+            }
 
-            logger.debug("收到新消息:{} {} {} {} {}", MsgId, FromUserName, ToUserName, Content, msgType);
+            logger.debug("收到新消息:{} {} {} {} {}", MsgId, fromNickName, toNickName, Content, msgType);
             MsgHandler msgHandler = this.handlerMap.get(msgType);
             if (null != msgHandler) {
                 msgHandler.handle(message, api);

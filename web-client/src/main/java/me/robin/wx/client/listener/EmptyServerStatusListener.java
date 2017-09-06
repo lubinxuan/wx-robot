@@ -19,11 +19,6 @@ public class EmptyServerStatusListener implements ServerStatusListener {
     }
 
     @Override
-    public void onUUIDSuccess(String url) {
-        logger.debug("登录二维码:{}", url);
-    }
-
-    @Override
     public void onAddMsgList(JSONArray addMsgList, WxApi api) {
 
     }
@@ -40,11 +35,6 @@ public class EmptyServerStatusListener implements ServerStatusListener {
 
     @Override
     public void onModChatRoomMemberList(JSONArray modChatRoomMemberList, WxApi api) {
-
-    }
-
-    @Override
-    public void loginSuccess() {
 
     }
 }

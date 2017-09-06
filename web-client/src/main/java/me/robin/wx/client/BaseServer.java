@@ -10,6 +10,7 @@ import lombok.Setter;
 import me.robin.wx.client.cookie.CookieInterceptor;
 import me.robin.wx.client.cookie.MemoryCookieStore;
 import me.robin.wx.client.listener.EmptyServerStatusListener;
+import me.robin.wx.client.listener.LoginProcessListener;
 import me.robin.wx.client.listener.MessageSendListener;
 import me.robin.wx.client.listener.ServerStatusListener;
 import me.robin.wx.client.model.LoginUser;
@@ -24,26 +25,29 @@ import okhttp3.*;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.CookieStore;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /**
  * Created by xuanlubin on 2017/4/18.
  * 微信WEB客户端
  */
-public abstract class BaseServer implements Runnable, WxApi {
+public abstract class BaseServer implements Runnable, WxApi, Closeable {
 
     private static final Logger logger = LoggerFactory.getLogger(BaseServer.class);
 
@@ -58,7 +62,12 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private static final ServerStatusListener DEFAULT_SERVER_STATUS_LISTENER = new EmptyServerStatusListener();
 
-    private Timer timer;
+    private static final BiConsumer<Boolean, String> DEFAULT = (aBoolean, s) -> {
+
+    };
+
+    private static final LoginProcessListener DEFAULT_LOGIN_PROCESS = new LoginProcessListener() {
+    };
 
     private String qrBaseUrl = "https://login.weixin.qq.com/qrcode/";
 
@@ -70,7 +79,10 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     OkHttpClient client;
 
+    private volatile boolean closed = false;
+
     protected ServerStatusListener statusListener = DEFAULT_SERVER_STATUS_LISTENER;
+    protected LoginProcessListener loginProcessListener = DEFAULT_LOGIN_PROCESS;
 
     private ExpireListener expireListener = DEFAULT_EXPIRE_LISTENER;
 
@@ -85,15 +97,11 @@ public abstract class BaseServer implements Runnable, WxApi {
 
     private boolean groupMemberDetail = true;
 
-    private final CountDownLatch NO_WAIT = new CountDownLatch(0);
+    private Thread thread;
 
     private final AtomicLong idCounter = new AtomicLong(0);
 
     private final DateFormat dateFormat = new SimpleDateFormat("EEE d MMM yyyy HH:mm:ss 'GMT'", Locale.CHINA);
-
-    private static final BiConsumer<Boolean, String> DEFAULT = (aBoolean, s) -> {
-
-    };
 
     public BaseServer(String instanceId, String appId, ContactService contactService) {
         this.appId = appId;
@@ -105,7 +113,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                 .connectTimeout(60, TimeUnit.SECONDS)
                 .addInterceptor(new CookieInterceptor(this.cookieStore))
                 .build();
-        this.timer = new Timer("GroupContactSyncThread-" + instanceId);
+
         this.dateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
     }
 
@@ -153,23 +161,15 @@ public abstract class BaseServer implements Runnable, WxApi {
                     JSONObject user = responseJson.getJSONObject("User");
                     BaseServer.this.user.setUserName(user.getString("UserName"));
                     BaseServer.this.user.setNickName(user.getString("NickName"));
-                    BaseServer.this.user.setSyncKey(responseJson.getJSONObject("SyncKey"));
+                    JSONObject syncKey = responseJson.getJSONObject("SyncKey");
+                    BaseServer.this.user.setSyncKey(syncKey);
+                    BaseServer.this.user.setSyncCheckKey(syncKey);
                     statusNotify();
                     contactService.updateContact(responseJson.getJSONArray("ContactList"));
                     getContact();
-                    BaseServer.this.timer.schedule(new TimerTask() {
-                        @Override
-                        public void run() {
-                            try {
-                                batchGetContact();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }, 2000, 2000);
                 } else {
                     String message = TypeUtils.castToString(JSONPath.eval(responseJson, "BaseResponse.ErrMsg"));
-                    logger.warn("[{}]web微信初始化失败 ret:{} errMsg:{}", instanceId, ret, message);
+                    logger.warn("web微信初始化失败 ret:{} errMsg:{}", ret, message);
                 }
             }
         };
@@ -189,16 +189,22 @@ public abstract class BaseServer implements Runnable, WxApi {
         Callback callback = new BaseJsonCallback() {
             @Override
             void process(Call call, Response response, JSONObject content) {
-                logger.info("[{}]获取到联系人列表", instanceId);
+                logger.info("获取到联系人列表");
                 syncCheck();
                 contactService.updateContact(content.getJSONArray("MemberList"));
                 login = true;
-                statusListener.loginSuccess();
+                loginProcessListener.onContactSuccess();
                 synchronized (BaseServer.this.user) {
                     BaseServer.this.user.notifyAll();
                 }
                 List<WxGroup> wxGroupList = contactService.listAllGroup();
-                wxGroupList.forEach(g -> lazyUpdateGroupQueue.offer(new String[]{g.getUserName()}));
+                wxGroupList.forEach(g -> addGroupLazyUpdateTask(g.getUserName()));
+                if (null != BaseServer.this.thread) {
+                    return;
+                }
+                BaseServer.this.thread = new Thread(new ContactUpdateTask());
+                BaseServer.this.thread.setName("GroupContactSyncThread-" + instanceId);
+                BaseServer.this.thread.start();
             }
         };
         builder.execute(client, callback);
@@ -207,9 +213,9 @@ public abstract class BaseServer implements Runnable, WxApi {
     /**
      * 获取通讯录
      */
-    private void batchGetContact() throws InterruptedException {
-        List<Map<String, String>> updateContactList = new ArrayList<>();
-        while (true) {
+    private void batchGetContact() {
+        Map<String, String> updateContactMap = new HashMap<>();
+        while (!closed) {
             List<String[]> groupNameList = new ArrayList<>();
             boolean fromGroup = true;
             int rows = lazyUpdateGroupQueue.drainTo(groupNameList, 10);
@@ -221,23 +227,22 @@ public abstract class BaseServer implements Runnable, WxApi {
                 return;
             }
             for (String[] contactInfo : groupNameList) {
-                Map<String, String> param = new HashMap<>();
-                param.put("EncryChatRoomId", contactInfo.length > 1 ? contactInfo[1] : "");
-                param.put("UserName", contactInfo[0]);
-                updateContactList.add(param);
+                updateContactMap.put(contactInfo[0], contactInfo.length > 1 ? contactInfo[1] : "");
             }
             try {
-                if (batchGetContactTask(updateContactList, null)) {
-                    updateContactList.clear();
-                }
+                batchGetContactTask(updateContactMap, null);
+                updateContactMap.clear();
             } catch (Exception e) {
                 logger.warn("获取通讯录详情");
             }
-            if (!updateContactList.isEmpty()) {
+            if (!updateContactMap.isEmpty()) {
                 if (fromGroup) {
                     lazyUpdateGroupQueue.addAll(groupNameList);
                 } else {
                     lazyUpdateGroupMemberQueue.addAll(groupNameList);
+                }
+                synchronized (instanceId) {
+                    instanceId.notify();
                 }
                 break;
             }
@@ -245,61 +250,109 @@ public abstract class BaseServer implements Runnable, WxApi {
     }
 
     public boolean updateUserContact(String userName, Consumer<WxUser> successCallback) throws IOException {
-        Map<String, String> param = new HashMap<>();
-        param.put("EncryChatRoomId", "");
-        param.put("UserName", userName);
         Consumer<List<WxUser>> listConsumer = null == successCallback ? null : wxUsers -> {
             if (null != wxUsers && !wxUsers.isEmpty()) {
                 successCallback.accept(wxUsers.get(0));
             }
         };
-        return batchGetContactTask(Collections.singletonList(param), listConsumer);
+        return batchGetContactTask(Collections.singletonMap(userName, null), listConsumer);
     }
 
-    private boolean batchGetContactTask(List<Map<String, String>> updateContactList, Consumer<List<WxUser>> listConsumer) throws IOException {
-        if (updateContactList.isEmpty()) {
+    public void offerGroupUpdateTask(WxGroup wxGroup) {
+
+        WxUser group = this.contactService.queryUserByUserName(wxGroup.getUserName());
+
+        if (null == group) {
+            this.contactService.addWxUser(wxGroup);
+        }
+
+        if (null == group || StringUtils.isBlank(group.getEncryChatRoomId())) {
+            this.addGroupLazyUpdateTask(wxGroup.getUserName());
+        } else if (groupMemberDetail) {
+            Set<String> memberFilter = group.getMemberList().stream().map(WxUser::getNickName).collect(Collectors.toSet());
+            for (WxUser user : wxGroup.getMemberList()) {
+                if (memberFilter.add(user.getUserName())) {
+                    lazyUpdateGroupMemberQueue.offer(new String[]{user.getUserName(), group.getEncryChatRoomId()});
+                    synchronized (instanceId) {
+                        instanceId.notify();
+                    }
+                }
+            }
+        }
+    }
+
+
+    public void addGroupLazyUpdateTask(String groupUserName) {
+        if (!contactService.groupInitialized(groupUserName)) {
+            this.lazyUpdateGroupQueue.offer(new String[]{groupUserName});
+            synchronized (instanceId) {
+                instanceId.notify();
+            }
+        }
+    }
+
+
+    private boolean batchGetContactTask(Map<String, String> updateContactMap, Consumer<List<WxUser>> listConsumer) throws IOException {
+        if (updateContactMap.isEmpty()) {
             return true;
         }
-        logger.info("开始同步通讯录详情:{}", JSON.toJSONString(updateContactList));
+        logger.info("开始同步通讯录详情:{}", JSON.toJSONString(updateContactMap));
         RequestBuilder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxbatchgetcontact");
         builder.query("type", "ex");
         builder.query("r", System.currentTimeMillis());
         builder.query("lang", "zh_CN");
-        builder.json("Count", updateContactList.size());
+        builder.json("Count", updateContactMap.size());
+        List<Map<String, String>> updateContactList = new ArrayList<>(updateContactMap.size());
+        for (Map.Entry<String, String> entry : updateContactMap.entrySet()) {
+            Map<String, String> param = new HashMap<>();
+            param.put("EncryChatRoomId", StringUtils.isBlank(entry.getValue()) ? "" : entry.getValue());
+            param.put("UserName", entry.getKey());
+            updateContactList.add(param);
+        }
         builder.json("List", updateContactList);
         baseRequest(builder);
         Response response = builder.execute(client);
         JSONObject content = readFromResp(response);
         Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
         if (null != ret && ret == 0) {
-            logger.info("[{}]同步到群组信息", instanceId);
+            if (logger.isDebugEnabled()) {
+                logger.debug("[{}]同步到群组信息   content:{}", instanceId, content.toJSONString());
+            } else {
+                logger.info("[{}]同步到群组信息", instanceId);
+            }
             JSONArray contactList = content.getJSONArray("ContactList");
             List<WxUser> userList = new ArrayList<>();
             for (int i = 0; i < contactList.size(); i++) {
                 WxUser wxUser = WxUtil.parse(contactList.getJSONObject(i));
+                if (StringUtils.isBlank(wxUser.getEncryChatRoomId()) && StringUtils.isBlank(updateContactMap.get(wxUser.getUserName()))) {
+                    continue;
+                }
                 userList.add(wxUser);
-                if (wxUser instanceof WxGroup) {
-                    WxGroup group = (WxGroup) wxUser;
-                    WxGroup wxGroup = (WxGroup) contactService.queryUserByUserName(group.getUserName());
+                if (wxUser.isGroup()) {
+                    WxUser wxGroup = contactService.queryUserByUserName(wxUser.getUserName());
+                    wxUser.getMemberList().forEach(member -> member.setFollow(contactService.contain(member.getUserName())));
                     if (wxGroup == null) {
-                        contactService.addWxUser(group);
-                        wxGroup = group;
+                        contactService.addWxUser(wxUser);
+                        wxGroup = wxUser;
                     } else {
-                        wxGroup.setMemberCount(group.getMemberCount());
-                        wxGroup.setMemberList(group.getMemberList());
-                        wxGroup.setEncryChatRoomId(group.getEncryChatRoomId());
+                        wxGroup.setMemberCount(wxUser.getMemberCount());
+                        wxGroup.setMemberList(wxUser.getMemberList());
+                        wxGroup.setEncryChatRoomId(wxUser.getEncryChatRoomId());
                     }
                     if (groupMemberDetail) {
                         //群组成员信息加入等待更新列表
                         for (WxUser user : wxGroup.getMemberList()) {
-                            lazyUpdateGroupMemberQueue.offer(new String[]{user.getUserName(), group.getEncryChatRoomId()});
+                            lazyUpdateGroupMemberQueue.offer(new String[]{user.getUserName(), wxUser.getEncryChatRoomId()});
                         }
                     }
                 } else {
                     if (StringUtils.isNotBlank(wxUser.getEncryChatRoomId())) {
+                        wxUser.setFollow(contactService.contain(wxUser.getUserName()));
                         contactService.updateGroupUserInfo(wxUser);
                     } else {
-                        contactService.addWxUser(wxUser);
+                        if (StringUtils.isBlank(updateContactMap.get(wxUser.getUserName()))) {
+                            contactService.addWxUser(wxUser);
+                        }
                     }
                 }
             }
@@ -318,6 +371,9 @@ public abstract class BaseServer implements Runnable, WxApi {
      * long poll sync
      */
     private void syncCheck() {
+        if (closed) {
+            return;
+        }
         //https://webpush.wx2.qq.com/cgi-bin/mmwebwx-bin/synccheck?r=1492576604964&skey=%40crypt_cfbf95a5_ddaa708f9a9ac2e2d7a95a0a433b3c67&sid=GQ7GDgvoL6Y8FrQY&uin=1376796829&deviceid=e644133084693151&synckey=1_657703788%7C2_657703818%7C3_657703594%7C1000_1492563241&_=1492576604148
         String url = "https://webpush.{host}/cgi-bin/mmwebwx-bin/synccheck";
         RequestBuilder builder = initRequestBuilder(url);
@@ -338,18 +394,15 @@ public abstract class BaseServer implements Runnable, WxApi {
                 switch (retcode) {
                     case 0:
                         SyncMonitor.updateSyncTime(BaseServer.this);
-                        switch (selector) {
-                            case 0:
-                                break;
-                            default:
-                                logger.info("[{}]有信息需要同步 selector:{}", instanceId, selector);
-                                sync();
-                                return;
+                        if (selector != 0) {
+                            logger.info("有信息需要同步 selector:{}", selector);
+                            sync();
+                            return;
                         }
                         break;
                     case 1101:
                         login = false;
-                        logger.info("[{}]客户端退出了", instanceId);
+                        logger.info("客户端退出了");
                         WxUtil.deleteImgTmpDir(BaseServer.this.user.getUin());
                         BaseServer.this.contactService.clearContact();
                         if (!expireListener.expire(BaseServer.this, BaseServer.this.user.getUin())) {
@@ -360,15 +413,15 @@ public abstract class BaseServer implements Runnable, WxApi {
                         return;
                     case 1102:
                         login = false;
-                        logger.info("[{}]会话异常", instanceId);
+                        logger.error("会话异常");
                         WxUtil.deleteImgTmpDir(BaseServer.this.user.getUin());
                         BaseServer.this.contactService.clearContact();
                         SyncMonitor.evict(BaseServer.this);
                         return;
                     default:
-                        logger.warn("[{}]没有正常获取到同步信息 : {}", instanceId, content);
+                        logger.warn("没有正常获取到同步信息 : {}", content);
                 }
-                syncCheck();
+                delayTask(BaseServer.this::syncCheck, 3);
             }
         };
         builder.execute(client, callback);
@@ -391,11 +444,11 @@ public abstract class BaseServer implements Runnable, WxApi {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(syncRsp, "BaseResponse.Ret"));
                 boolean syncNow = true;
                 if (null != ret && 0 == ret) {
-                    logger.debug("[{}]同步成功", instanceId);
+                    logger.info("消息同步成功");
                     JSONObject syncKey = syncRsp.getJSONObject("SyncKey");
                     JSONObject syncCheckKey = syncRsp.getJSONObject("SyncCheckKey");
                     if (StringUtils.equals(syncKey.toJSONString(), user.getSyncKey().toJSONString())) {
-                        logger.warn("[{}]同步key没有更新", instanceId);
+                        logger.warn("同步key没有更新");
                         syncNow = false;
                     } else {
                         user.setSyncCheckKey(syncCheckKey);
@@ -403,7 +456,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                     }
                     String skey = syncRsp.getString("SKey");
                     if (StringUtils.isNotBlank(skey)) {
-                        logger.info("[{}]更新用户SKey", instanceId);
+                        logger.info("更新用户SKey");
                         user.setSkey(skey);
                     }
                     if (null != statusListener) {
@@ -415,7 +468,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                         statusListener.onModContactList(syncRsp.getJSONArray("ModContactList"), BaseServer.this);
                     }
                 } else {
-                    logger.warn("[{}]同步异常:{}", instanceId, syncRsp.toJSONString());
+                    logger.warn("同步异常:{}", syncRsp.toJSONString());
                 }
 
                 if (syncNow) {
@@ -434,8 +487,8 @@ public abstract class BaseServer implements Runnable, WxApi {
             String statusNotifyUserName = message.getString("StatusNotifyUserName");
             String[] userNames = StringUtils.split(statusNotifyUserName, ",");
             for (String userName : userNames) {
-                if (StringUtils.startsWith(statusNotifyUserName, "@@") && !contactService.groupInitialized(statusNotifyUserName)) {
-                    lazyUpdateGroupQueue.offer(new String[]{userName});
+                if (StringUtils.startsWith(userName, "@@")) {
+                    this.addGroupLazyUpdateTask(userName);
                 }
             }
         }
@@ -461,18 +514,23 @@ public abstract class BaseServer implements Runnable, WxApi {
                     List<Cookie> cookies = Cookie.parseAll(call.request().url(), response.headers());
                     Optional<Cookie> wxSidCookie = cookies.stream().filter(cookie -> "wxsid".equals(cookie.name())).findFirst();
                     if (wxSidCookie.isPresent()) {
-                        user.setSid(wxSidCookie.get().value());
-                        logger.info("[{}]登录成功", instanceId);
-                        BaseServer.this.init();
-                        return;
+                        if (loginProcessListener.onUinSuccess(user.getUin())) {
+                            user.setSid(wxSidCookie.get().value());
+                            logger.info("登录成功");
+                            BaseServer.this.init();
+                        }
                     } else {
-                        logger.warn("[{}]微信登录异常,没有读取到wxsid", instanceId);
+                        logger.warn("微信登录异常,没有读取到wxsid");
+                        delayTask(() -> reCall(call, this), 3);
                     }
+                } else if ("1203".equals(ret)) {
+                    String message = WxUtil.getValueFromXml(content, "message");
+                    expireListener.expire(BaseServer.this, "");
+                    loginProcessListener.updateScanStatus(1203, StringUtils.isBlank(message) ? "为了你的帐号安全，新注册的微信号不能登录网页微信" : message);
                 } else {
-                    String message = WxUtil.getValueFromXml(content, "handler");
-                    logger.error("[{}]WEB微信登录异常 ret:{} handler:{}", instanceId, ret, message);
+                    logger.error("WEB微信登录异常 ret:{} handler:{}", ret, content);
+                    delayTask(() -> reCall(call, this), 3);
                 }
-                reCall(call, this);
             }
         };
         builder.execute(client, callback);
@@ -493,7 +551,7 @@ public abstract class BaseServer implements Runnable, WxApi {
         builder.execute(client, new BaseCallback() {
             @Override
             public void process(Call call, Response response, String content) {
-                logger.info("[{}]WX登录StatusNotify send success", instanceId);
+                logger.info("WX登录StatusNotify send success");
             }
         });
     }
@@ -514,7 +572,7 @@ public abstract class BaseServer implements Runnable, WxApi {
 
         if (!this.login && StringUtils.isNotBlank(this.user.getUuid())) {
             String qrCodeUrl = getQrCodeUrl();
-            statusListener.onUUIDSuccess(qrCodeUrl);
+            loginProcessListener.onQrUrlSuccess(qrCodeUrl);
             biConsumer.accept(false, qrCodeUrl);
             return;
         }
@@ -530,12 +588,12 @@ public abstract class BaseServer implements Runnable, WxApi {
                     int e_idx = content.indexOf("\"", idx + 1);
                     BaseServer.this.user.setUuid(content.substring(idx + 1, e_idx));
                     String qrCodeUrl = getQrCodeUrl();
-                    statusListener.onUUIDSuccess(qrCodeUrl);
+                    loginProcessListener.onQrUrlSuccess(qrCodeUrl);
                     expireListener.setLastLoginRequest(System.currentTimeMillis());
                     BaseServer.this.waitForLogin();
                     biConsumer.accept(false, qrCodeUrl);
                 } else {
-                    logger.warn("[{}]没有正常获取到UUID", instanceId);
+                    logger.warn("没有正常获取到UUID");
                     delayTask(() -> reCall(call, this), 2);
                 }
             }
@@ -564,25 +622,29 @@ public abstract class BaseServer implements Runnable, WxApi {
             @Override
             void process(Call call, Response response, String content) {
                 String status = StringUtils.substringBetween(content, "window.code=", ";");
-                switch (status) {
-                    case "200":
+                int statusCode = NumberUtils.toInt(status, -1);
+                switch (statusCode) {
+                    case 200:
                         String url = StringUtils.substringBetween(content, "window.redirect_uri=\"", "\"");
                         HttpUrl httpUrl = HttpUrl.parse(url);
                         user.setLoginHost(httpUrl.host());
                         BaseServer.this.login(url);
                         break;
-                    case "201":
-                        logger.info("[{}]请点击手机客户端确认登录", instanceId);
+                    case 201:
+                        logger.info("请点击手机客户端确认登录");
                         BaseServer.this.user.setUserAvatar(StringUtils.substringBetween(content, "window.userAvatar = '", "';"));
                         delayTask(BaseServer.this::waitForLogin, 2);
+                        loginProcessListener.updateScanStatus(statusCode, "请点击手机客户端确认登录");
                         break;
-                    case "408":
-                        logger.info("[{}]请用手机客户端扫码登录web微信", instanceId);
+                    case 408:
+                        logger.info("请用手机客户端扫码登录web微信");
                         waitForLogin();
+                        loginProcessListener.updateScanStatus(statusCode, "请用手机客户端扫码登录web微信");
                         break;
-                    case "400":
-                        logger.info("[{}]二维码失效", instanceId);
+                    case 400:
+                        logger.info("二维码失效");
                         BaseServer.this.user.setUuid(null);
+                        loginProcessListener.updateScanStatus(statusCode, "二维码失效");
                         if (expireListener.expire() && expireListener.expire(BaseServer.this, BaseServer.this.user.getUin())) {
                             SyncMonitor.evict(BaseServer.this);
                             return;
@@ -590,7 +652,7 @@ public abstract class BaseServer implements Runnable, WxApi {
                         BaseServer.this.queryNewUUID();
                         break;
                     default:
-                        logger.info("[{}]扫码登录发生未知异常 服务器响应:{}", instanceId, content);
+                        logger.info("扫码登录发生未知异常 服务器响应:{}", content);
                         if (expireListener.expire(BaseServer.this, BaseServer.this.user.getUin())) {
                             SyncMonitor.evict(BaseServer.this);
                         }
@@ -600,7 +662,7 @@ public abstract class BaseServer implements Runnable, WxApi {
     }
 
     public void downloadImg(WxGroup group, WxUser wxUser, Consumer<byte[]> consumer) {
-        String tmpPath = this.user.getUin() + "/" + (null == group ? "" : (group.getUserName() + "-")) + wxUser.getUserName() + ".jpg";
+        String tmpPath = this.user.getUin() + "/" + wxUser.getUserName() + ".jpg";
         byte[] data = WxUtil.getHeaderImg(tmpPath);
         if (null != data) {
             consumer.accept(data);
@@ -675,11 +737,11 @@ public abstract class BaseServer implements Runnable, WxApi {
             void process(Call call, Response response, JSONObject content) {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
                 if (null != ret && 0 == ret) {
-                    logger.info("[{}][]文件上传成功", getInstanceId());
+                    logger.info("文件上传成功");
                     String mediaId = content.getString("MediaId");
                     successUploadCallback.accept(wxUser, mediaId);
                 } else {
-                    logger.info("[{}]消息发送失败:{}", getInstanceId(), JSON.toJSONString(content));
+                    logger.info("消息发送失败:{}", JSON.toJSONString(content));
                     messageSendListener.failure(user, filePart.getFileName(), ret, TypeUtils.castToString(JSONPath.eval(content, "BaseResponse.ErrMsg")));
                 }
             }
@@ -720,6 +782,12 @@ public abstract class BaseServer implements Runnable, WxApi {
      * @param callback
      */
     void reCall(Call call, Callback callback) {
+        if (this.closed) {
+            logger.warn("[{}]客户端已关闭", instanceId);
+            return;
+        }
+
+
         Request request = call.request().newBuilder().build();
         client.newCall(request).enqueue(callback);
     }
@@ -795,13 +863,33 @@ public abstract class BaseServer implements Runnable, WxApi {
         delayTaskScheduler.schedule(new TimerTask() {
             @Override
             public void run() {
+                if (BaseServer.this.closed) {
+                    return;
+                }
                 delayTask.execute();
             }
         }, (long) (delaySecond * 1000));
     }
 
+    @Override
+    public void close() throws IOException {
+        this.closed = true;
+        this.client.dispatcher().cancelAll();
+        this.client.dispatcher().executorService().shutdownNow();
+        if (StringUtils.isNotBlank(this.user.getUin())) {
+            WxUtil.deleteImgTmpDir(this.user.getUin());
+        }
+        synchronized (instanceId) {
+            instanceId.notify();
+        }
+    }
+
     public void setStatusListener(ServerStatusListener statusListener) {
         this.statusListener = null == statusListener ? DEFAULT_SERVER_STATUS_LISTENER : statusListener;
+    }
+
+    public void setLoginProcessListener(LoginProcessListener loginProcessListener) {
+        this.loginProcessListener = loginProcessListener;
     }
 
     public void setGroupMemberDetail(boolean groupMemberDetail) {
@@ -820,16 +908,38 @@ public abstract class BaseServer implements Runnable, WxApi {
         return instanceId;
     }
 
+
+    private class ContactUpdateTask implements Runnable {
+
+        @Override
+        public void run() {
+            while (!closed) {
+                if (lazyUpdateGroupMemberQueue.isEmpty() && lazyUpdateGroupQueue.isEmpty()) {
+                    synchronized (instanceId) {
+                        try {
+                            instanceId.wait();
+                        } catch (InterruptedException ignore) {
+                        }
+                    }
+                }
+                batchGetContact();
+            }
+            logger.info("通讯录同步线程退出");
+        }
+    }
+
     public abstract class BaseCallback implements Callback {
 
         @Override
         public void onFailure(Call call, IOException e) {
+            MDC.put("tag", "[" + instanceId + "]");
             logger.error("{}", call.request().url().toString(), e);
             reCall(call, this);
         }
 
         @Override
         public void onResponse(Call call, Response response) throws IOException {
+            MDC.put("tag", "[" + instanceId + "]");
             try {
                 String content = ResponseReadUtils.read(response);
                 this.process(call, response, content);
@@ -854,12 +964,14 @@ public abstract class BaseServer implements Runnable, WxApi {
 
         @Override
         public void onFailure(Call call, IOException e) {
+            MDC.put("tag", "[" + instanceId + "]");
             logger.error("{}", call.request().url().toString(), e);
             reCall(call, this);
         }
 
         @Override
         public void onResponse(Call call, Response response) throws IOException {
+            MDC.put("tag", "[" + instanceId + "]");
             try {
                 this.process(call, response, readFromResp(response));
             } finally {

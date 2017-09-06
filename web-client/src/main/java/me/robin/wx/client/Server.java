@@ -111,12 +111,12 @@ public class Server extends BaseServer {
             void process(Call call, Response response, JSONObject syncRsp) {
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(syncRsp, "BaseResponse.Ret"));
                 if (null != ret && 0 == ret) {
-                    logger.info("[{}]消息发送成功", getInstanceId());
+                    logger.info("消息发送成功");
                     String msgId = syncRsp.getString("MsgID");
                     msg.put("MsgId", msgId);
                     messageSendListener.success(wxUser.getUserName(), message, msgId, localId);
                 } else {
-                    logger.info("[{}]消息发送失败:{}", getInstanceId(), syncRsp.toJSONString());
+                    logger.info("消息发送失败:{}", syncRsp.toJSONString());
                     messageSendListener.failure(wxUser.getUserName(), message, ret, TypeUtils.castToString(JSONPath.eval(syncRsp, "BaseResponse.ErrMsg")));
                 }
             }
@@ -131,7 +131,7 @@ public class Server extends BaseServer {
      */
     public void modChatRoomName(String chatRoom, String name) throws IOException {
         if (!checkLogin()) {
-            logger.info("[{}]还未完成登录,不能发送消息", getInstanceId());
+            logger.info("还未完成登录,不能发送消息");
         } else {
             WxUser wxUser = contactService.queryUser(chatRoom);
             if (wxUser instanceof WxGroup) {
@@ -146,12 +146,12 @@ public class Server extends BaseServer {
                 JSONObject content = readFromResp(response);
                 Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
                 if (null != ret && 0 == ret) {
-                    logger.info("[{}]群聊名称修改修改成功", getInstanceId());
+                    logger.info("群聊名称修改修改成功");
                 } else {
-                    logger.info("[{}]群聊名称修改失败:{}", getInstanceId(), content.toJSONString());
+                    logger.info("群聊名称修改失败:{}", content.toJSONString());
                 }
             } else {
-                logger.warn("[{}]要求修改的不是群", getInstanceId());
+                logger.warn("要求修改的不是群");
             }
         }
     }
@@ -162,10 +162,10 @@ public class Server extends BaseServer {
      * @param userName
      * @param verifyContent
      */
-    public boolean addContact(String userName, String verifyContent) throws IOException {
+    public int addContact(String userName, String verifyContent) throws IOException {
         if (!checkLogin()) {
             logger.info("[{}]还未完成登录,无法添加好友", getInstanceId());
-            return false;
+            throw new RuntimeException("未完成登录,加好友请求无法执行");
         } else {
             RequestBuilder builder = initRequestBuilder("/cgi-bin/mmwebwx-bin/webwxverifyuser");
             builder.query("r", System.currentTimeMillis());
@@ -185,11 +185,11 @@ public class Server extends BaseServer {
             JSONObject content = readFromResp(response);
             Integer ret = TypeUtils.castToInt(JSONPath.eval(content, "BaseResponse.Ret"));
             if (null != ret && 0 == ret) {
-                logger.info("[{}]好友请求成功", getInstanceId());
-                return true;
+                logger.info("好友请求成功");
+                return 0;
             } else {
                 logger.info("[{}]好友请求失败:{}", getInstanceId(), content.toJSONString());
-                return false;
+                return null == ret ? -1 : ret;
             }
         }
     }

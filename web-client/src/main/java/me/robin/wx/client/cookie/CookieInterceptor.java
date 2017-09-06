@@ -8,11 +8,11 @@ import okhttp3.Response;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.IOException;
-import java.net.*;
-import java.util.Collections;
-import java.util.HashMap;
+import java.net.CookieStore;
+import java.net.HttpCookie;
+import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Created by xuanlubin on 2017/4/19.
@@ -20,39 +20,44 @@ import java.util.Map;
 @Slf4j
 public class CookieInterceptor implements Interceptor {
 
-    private CookieHandler cookieHandler = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+    private final CookieStore cookieStore;
 
     public CookieInterceptor(CookieStore cookieStore) {
-        this.cookieHandler = new CookieManager(cookieStore, CookiePolicy.ACCEPT_ALL);
+        this.cookieStore = cookieStore;
     }
 
     @Override
     public Response intercept(Chain chain) throws IOException {
         Request request = chain.request();
         URI uri = request.url().uri();
-        List<String> cookies = cookieHandler.get(uri, Collections.emptyMap()).get("Cookie");
-
+        List<HttpCookie> cookieList = this.cookieStore.get(uri);
         Response networkResponse;
-        if (null != cookies && !cookies.isEmpty()) {
+        if (null != cookieList && !cookieList.isEmpty()) {
             Request.Builder requestBuilder = request.newBuilder();
-            requestBuilder.header("Cookie", StringUtils.join(cookies, "; "));
+            StringBuilder sb = new StringBuilder();
+            for (HttpCookie httpCookie : cookieList) {
+                if (sb.length() > 0) {
+                    sb.append("; ");
+                }
+                sb.append(httpCookie.getName()).append("=").append(httpCookie.getValue());
+            }
+            requestBuilder.header("Cookie", sb.toString());
             networkResponse = chain.proceed(requestBuilder.build());
             networkResponse = networkResponse.newBuilder().request(request).build();
         } else {
             networkResponse = chain.proceed(request);
         }
         Headers headers = networkResponse.headers();
-        if (headers.size() > 0) {
-            Map<String, List<String>> headersMap = new HashMap<>();
-            for (String name : headers.names()) {
-                if (!StringUtils.startsWith(StringUtils.lowerCase(name), "set-cookie")) {
-                    continue;
-                }
-                List<String> values = headers.values(name);
-                headersMap.put(name, values);
-                log.info("update cookie:{} {}", name, StringUtils.join(values, ","));
+        log.debug("url:{} status:{}", uri.toString(), networkResponse.code());
+        List<String> rspCookieList = new ArrayList<>();
+        rspCookieList.addAll(headers.values("set-cookie"));
+        rspCookieList.addAll(headers.values("set-cookie2"));
+        if (rspCookieList.size() > 0) {
+            log.info("update cookie: {}", StringUtils.join(rspCookieList, ","));
+            for (String cookie : rspCookieList) {
+                List<HttpCookie> httpCookieList = HttpCookie.parse(cookie);
+                httpCookieList.forEach(ck -> this.cookieStore.add(uri, ck));
             }
-            cookieHandler.put(uri, headersMap);
         }
         return networkResponse;
     }
