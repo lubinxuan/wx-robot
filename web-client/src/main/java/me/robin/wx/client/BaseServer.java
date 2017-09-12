@@ -932,14 +932,14 @@ public abstract class BaseServer implements Runnable, WxApi, Closeable {
 
         @Override
         public void onFailure(Call call, IOException e) {
-            MDC.put("tag", "[" + instanceId + "]");
+            prepareMDC();
             logger.error("{}", call.request().url().toString(), e);
             reCall(call, this);
         }
 
         @Override
         public void onResponse(Call call, Response response) throws IOException {
-            MDC.put("tag", "[" + instanceId + "]");
+            prepareMDC();
             try {
                 String content = ResponseReadUtils.read(response);
                 this.process(call, response, content);
@@ -960,18 +960,27 @@ public abstract class BaseServer implements Runnable, WxApi, Closeable {
         }
     }
 
+    private void prepareMDC() {
+        if (StringUtils.isBlank(user.getUin())) {
+            MDC.put("tag", "[" + instanceId + "]");
+        } else {
+            MDC.put("tag", "[" + instanceId + ":" + user.getUin() + "]");
+        }
+    }
+
+
     public abstract class BaseJsonCallback implements Callback {
 
         @Override
         public void onFailure(Call call, IOException e) {
-            MDC.put("tag", "[" + instanceId + "]");
+            prepareMDC();
             logger.error("{}", call.request().url().toString(), e);
             reCall(call, this);
         }
 
         @Override
         public void onResponse(Call call, Response response) throws IOException {
-            MDC.put("tag", "[" + instanceId + "]");
+            prepareMDC();
             try {
                 this.process(call, response, readFromResp(response));
             } finally {
